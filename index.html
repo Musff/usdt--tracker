@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#070e14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="USDT Tracker" />
+  <title>USDT Tracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { background: #070e14; color: #e0f0ff; font-family: 'DM Mono', monospace; overscroll-behavior: none; }
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    ::-webkit-scrollbar { width: 0; }
+    .slide-up { animation: slideUp 0.25s ease; }
+    @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .fade-in { animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  const firebaseConfig = {
+    apiKey: "AIzaSyAOMPXSCdfTuyhqfP0OWXo_y0OCpOMLc-w",
+    authDomain: "tracker-bcacc.firebaseapp.com",
+    projectId: "tracker-bcacc",
+    storageBucket: "tracker-bcacc.firebasestorage.app",
+    messagingSenderId: "807298262681",
+    appId: "1:807298262681:web:3f627071a37a60ec287a08",
+    measurementId: "G-DC1G4MZ1WJ"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  window.__db = db;
+  window.__fbReady = true;
+  window.__collection = collection;
+  window.__addDoc = addDoc;
+  window.__deleteDoc = deleteDoc;
+  window.__doc = doc;
+  window.__onSnapshot = onSnapshot;
+  window.__query = query;
+  window.__orderBy = orderBy;
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
+<script type="text/babel">
+const { useState, useMemo, useEffect, useRef } = React;
+const TABS = ["Transactions","Avg Cost","Stocks","Profit","Reports"];
+const fmt = (n) => Number(n || 0).toFixed(2);
+const fmtDate = (d) => new Date(d).toLocaleDateString();
+  function PieChart({ data, size = 180 }) {
+  if (!data || data.length === 0) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20}}>No data</div>;
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (total === 0) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20}}>No data</div>;
+  let angle = -Math.PI / 2;
+  const cx = size / 2, cy = size / 2, r = size / 2 - 10;
+  const slices = data.map(d => {
+    const start = angle;
+    const sweep = (d.value / total) * 2 * Math.PI;
+    angle += sweep;
+    const x1 = cx + r * Math.cos(start), y1 = cy + r * Math.sin(start);
+    const x2 = cx + r * Math.cos(start + sweep), y2 = cy + r * Math.sin(start + sweep);
+    const large = sweep > Math.PI ? 1 : 0;
+    return { ...d, path: `M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} Z`, pct: ((d.value/total)*100).toFixed(1) };
+  });
+  return (
+    <div>
+      <svg width={size} height={size} style={{display:"block",margin:"0 auto"}}>
+        {slices.map((s,i) => <path key={i} d={s.path} fill={s.color} stroke="#070e14" strokeWidth="2"/>)}
+      </svg>
+      <div style={{display:"flex",flexWrap:"wrap",gap:"8px 16px",marginTop:12,justifyContent:"center"}}>
+        {slices.map((s,i) => (
+          <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
+            <div style={{width:10,height:10,borderRadius:2,background:s.color,flexShrink:0}}/>
+            <span style={{color:"#e0f0ff"}}>{s.label}</span>
+            <span style={{color:"#3a7a9c"}}>{s.pct}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function LineChart({ data, color="#7de8c8", height=120 }) {
+  if (!data || data.length < 2) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:12}}>Need more sell transactions for graph</div>;
+  const vals = data.map(d => d.value);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = max - min || 1;
+  const w = 320, h = height, pad = 24;
+  const pts = data.map((d, i) => {
+    const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((d.value - min) / range) * (h - pad * 2);
+    return `${x},${y}`;
+  });
+  const polyline = pts.join(" ");
+  const areaPath = `M${pts[0]} L${pts.join(" L")} L${pad + (w - pad*2)},${h-pad} L${pad},${h-pad} Z`;
+  return (
+    <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible"}}>
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill="url(#lg)"/>
+      <polyline points={polyline} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round"/>
+      {data.map((d,i) => {
+        const [x,y] = pts[i].split(",");
+        return <circle key={i} cx={x} cy={y} r="3" fill={color}/>;
+      })}
+      <text x={pad} y={h-6} fill="#3a7a9c" fontSize="9">{data[0]?.label}</text>
+      <text x={w-pad} y={h-6} fill="#3a7a9c" fontSize="9" textAnchor="end">{data[data.length-1]?.label}</text>
+      <text x={pad-2} y={pad} fill="#3a7a9c" fontSize="9" textAnchor="end">${fmt(max)}</text>
+      <text x={pad-2} y={h-pad} fill="#3a7a9c" fontSize="9" textAnchor="end">${fmt(min)}</text>
+    </svg>
+  );
+}
+function Modal({ open, onClose, children }) {
+  if (!open) return null;
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:50,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} className="slide-up" style={{background:"#0f1923",borderRadius:"20px 20px 0 0",padding:"24px 20px 44px",width:"100%",maxWidth:480,border:"1px solid #1e3a4a",maxHeight:"90vh",overflowY:"auto"}}>
+        {children}
+      </div>
+    </div>
+  );
+}
+function Label({ children }) {
+  return <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2,marginBottom:6,textTransform:"uppercase"}}>{children}</div>;
+}
+function Card({ children, style }) {
+  return <div style={{background:"#0a1820",borderRadius:12,padding:"14px 16px",border:"1px solid #1a3040",...style}}>{children}</div>;
+}
+  function App() {
+  const [tab, setTab] = useState("Transactions");
+  const [txModal, setTxModal] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ price:"", qty:"", party:"" });
+  const [error, setError] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [fbReady, setFbReady] = useState(!!window.__fbReady);
+  const [reportFrom, setReportFrom] = useState("");
+  const [reportTo, setReportTo] = useState("");
+
+  useEffect(() => {
+    if (window.__fbReady) { setFbReady(true); return; }
+    const h = () => setFbReady(true);
+    window.addEventListener('firebase-ready', h);
+    return () => window.removeEventListener('firebase-ready', h);
+  }, []);
+
+  useEffect(() => {
+    if (!fbReady || !window.__db) return;
+    const q = window.__query(window.__collection(window.__db, "transactions"), window.__orderBy("date", "asc"));
+    const unsub = window.__onSnapshot(q, snap => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data(), date: new Date(d.data().date) }));
+      setTransactions(docs);
+      setLoading(false);
+    }, err => { console.error(err); setLoading(false); });
+    return unsub;
+  }, [fbReady]);
+
+  const portfolio = useMemo(() => {
+    let cash = 0, usdt = 0;
+    transactions.forEach(tx => {
+      if (tx.type==="buy") { cash -= tx.price*tx.qty; usdt += tx.qty; }
+      else { cash += tx.price*tx.qty; usdt -= tx.qty; }
+    });
+    return { cash, usdt };
+  }, [transactions]);
+
+  const avgCost = useMemo(() => {
+    let cost=0, qty=0;
+    transactions.forEach(tx => {
+      if (tx.type==="buy") { cost+=tx.price*tx.qty; qty+=tx.qty; }
+      else { const avg=qty>0?cost/qty:0; cost-=avg*tx.qty; qty-=tx.qty; }
+    });
+    return qty>0 ? cost/qty : 0;
+  }, [transactions]);
+
+  const profits = useMemo(() => {
+    const now = Date.now(), DAY=86400000;
+    let today=0, weekly=0, monthly=0, allTime=0;
+    let rc=0, ru=0;
+    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx => {
+      if (tx.type==="buy") { rc+=tx.price*tx.qty; ru+=tx.qty; }
+      else {
+        const avg=ru>0?rc/ru:0, p=(tx.price-avg)*tx.qty;
+        const age=now-new Date(tx.date).getTime();
+        allTime+=p;
+        if(age<=DAY) today+=p;
+        if(age<=DAY*7) weekly+=p;
+        if(age<=DAY*30) monthly+=p;
+        rc-=avg*tx.qty; ru-=tx.qty;
+      }
+    });
+    return { today, weekly, monthly, allTime };
+  }, [transactions]);
+
+  const profitGraphData = useMemo(() => {
+    let rc=0, ru=0;
+    const byDay = {};
+    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx => {
+      if(tx.type==="buy") { rc+=tx.price*tx.qty; ru+=tx.qty; }
+      else {
+        const avg=ru>0?rc/ru:0, p=(tx.price-avg)*tx.qty;
+        const key=new Date(tx.date).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+        byDay[key]=(byDay[key]||0)+p;
+        rc-=avg*tx.qty; ru-=tx.qty;
+      }
+    });
+    let cumulative=0;
+    return Object.entries(byDay).map(([label,val])=>{ cumulative+=val; return {label,value:cumulative}; });
+  }, [transactions]);
+
+  const partyData = useMemo(() => {
+    const buyers={}, sellers={};
+    transactions.forEach(tx => {
+      if(tx.type==="sell") buyers[tx.party]=(buyers[tx.party]||0)+tx.qty;
+      else sellers[tx.party]=(sellers[tx.party]||0)+tx.qty;
+    });
+    const COLORS=["#7de8c8","#5bc4f5","#f5c05b","#e05070","#a78bfa","#34d399","#f97316","#60a5fa"];
+    const buyerList=Object.entries(buyers).map(([label,value],i)=>({label,value,color:COLORS[i%COLORS.length]}));
+    const sellerList=Object.entries(sellers).map(([label,value],i)=>({label,value,color:COLORS[i%COLORS.length]}));
+    return { buyerList, sellerList };
+  }, [transactions]);
+
+  const reportData = useMemo(() => {
+    const from = reportFrom ? new Date(reportFrom) : null;
+    const to = reportTo ? new Date(reportTo+"T23:59:59") : null;
+    const filtered = transactions.filter(tx => {
+      const d = new Date(tx.date);
+      if(from && d < from) return false;
+      if(to && d > to) return false;
+      return true;
+    });
+    let rc=0, ru=0, profit=0;
+    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx => {
+      if(tx.type==="buy") { rc+=tx.price*tx.qty; ru+=tx.qty; }
+      else {
+        const avg=ru>0?rc/ru:0, p=(tx.price-avg)*tx.qty;
+        const d=new Date(tx.date);
+        if((!from||d>=from)&&(!to||d<=to)) profit+=p;
+        rc-=avg*tx.qty; ru-=tx.qty;
+      }
+    });
+    const byParty={};
+    filtered.forEach(tx=>{
+      if(!byParty[tx.party]) byParty[tx.party]={name:tx.party,buyQty:0,sellQty:0,buyVal:0,sellVal:0};
+      if(tx.type==="buy"){byParty[tx.party].buyQty+=tx.qty;byParty[tx.party].buyVal+=tx.price*tx.qty;}
+      else{byParty[tx.party].sellQty+=tx.qty;byParty[tx.party].sellVal+=tx.price*tx.qty;}
+    });
+    const partyList=Object.values(byParty).sort((a,b)=>(b.buyQty+b.sellQty)-(a.buyQty+a.sellQty));
+    return { profit, filtered, partyList };
+  }, [transactions, reportFrom, reportTo]);
+
+  const previewAvg = useMemo(() => {
+    const price=parseFloat(form.price), qty=parseFloat(form.qty);
+    if(!price||!qty||txModal!=="buy") return null;
+    return (avgCost*portfolio.usdt+price*qty)/(portfolio.usdt+qty);
+  }, [form.price,form.qty,txModal,avgCost,portfolio.usdt]);
+
+  const handleSubmit = async () => {
+    const price=parseFloat(form.price), qty=parseFloat(form.qty);
+    if(!price||!qty||!form.party.trim()){setError("Please fill all fields");return;}
+    if(price<=0||qty<=0){setError("Price and quantity must be positive");return;}
+    if(txModal==="sell"&&qty>portfolio.usdt+0.0001){setError(`Not enough USDT. Available: ${fmt(portfolio.usdt)}`);return;}
+    try {
+      await window.__addDoc(window.__collection(window.__db,"transactions"),{
+        type:txModal, price, qty, party:form.party.trim(), date:new Date().toISOString()
+      });
+      setForm({price:"",qty:"",party:""});
+      setError("");
+      setTxModal(null);
+    } catch(e){ setError("Save failed: "+e.message); }
+  };
+
+  const handleDelete = async (id) => {
+    try { await window.__deleteDoc(window.__doc(window.__db,"transactions",id)); }
+    catch(e){ alert("Delete failed: "+e.message); }
+    setDeleteConfirm(null);
+  };
+
+  const closeModal = () => { setTxModal(null); setError(""); setForm({price:"",qty:"",party:""}); };
+  const sortedTx = [...transactions].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const isBuy = txModal==="buy";
+
+  if(loading) return (
+    <div style={{minHeight:"100vh",background:"#070e14",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      <div style={{fontSize:32}}>₮</div>
+      <div style={{fontSize:13,color:"#3a7a9c",letterSpacing:3}}>CONNECTING...</div>
+    </div>
+  );
+    return (
+    <div style={{minHeight:"100vh",background:"#070e14",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column"}}>
+      <div style={{padding:"max(env(safe-area-inset-top),20px) 20px 12px",background:"#070e14",borderBottom:"1px solid #1a3040"}}>
+        <div style={{fontSize:9,letterSpacing:4,color:"#3a7a9c",textTransform:"uppercase",marginBottom:2}}>Portfolio Tracker</div>
+        <div style={{fontSize:24,fontWeight:700,color:"#7de8c8",letterSpacing:-1}}>USDT Tracker</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:1,background:"#1a3040"}}>
+        {[{label:"Cash",value:`$${fmt(portfolio.cash)}`,color:"#7de8c8"},{label:"USDT",value:`${fmt(portfolio.usdt)} ₮`,color:"#5bc4f5"}].map(s=>(
+          <div key={s.label} style={{background:"#0a1820",padding:"10px 16px"}}>
+            <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2,marginBottom:3}}>{s.label.toUpperCase()}</div>
+            <div style={{fontSize:16,fontWeight:700,color:s.color}}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",background:"#0a1820",borderBottom:"2px solid #1a3040",overflowX:"auto"}}>
+        {TABS.map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"11px 4px",background:"none",border:"none",cursor:"pointer",fontSize:9,letterSpacing:1,fontFamily:"inherit",fontWeight:600,color:tab===t?"#7de8c8":"#3a7a9c",borderBottom:tab===t?"2px solid #7de8c8":"2px solid transparent",marginBottom:-2,textTransform:"uppercase",whiteSpace:"nowrap",minWidth:60}}>{t}</button>
+        ))}
+      </div>
+
+      {tab==="Transactions" && (
+        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",height:"calc(100vh - 150px)"}}>
+          <div style={{padding:"16px 20px",borderBottom:"1px solid #1a3040",flexShrink:0}}>
+            <Label>New Transaction</Label>
+            <div style={{display:"flex",gap:12,marginTop:8}}>
+              {[["buy","▲ BUY","#2aad72","#0d3d2a","#1a6b48"],["sell","▼ SELL","#e05070","#3d0d1a","#6b1a2a"]].map(([type,label,col,g1,g2])=>(
+                <button key={type} onClick={()=>setTxModal(type)} style={{flex:1,padding:"14px",borderRadius:12,background:`linear-gradient(135deg,${g1},${g2})`,border:`1px solid ${col}`,color:col,fontSize:13,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer"}}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"14px 20px"}}>
+            <Label>History ({transactions.length})</Label>
+            {sortedTx.length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:"40px 0",fontSize:13}}>No transactions yet.</div>}
+            {sortedTx.map(tx=>(
+              <div key={tx.id} style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${tx.type==="buy"?"#1a4030":"#401a28"}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:9,fontWeight:700,letterSpacing:2,color:tx.type==="buy"?"#2aad72":"#e05070",background:tx.type==="buy"?"#0d3d2a":"#3d0d1a",padding:"3px 7px",borderRadius:4}}>{tx.type.toUpperCase()}</span>
+                    <span style={{fontSize:12,color:"#5bc4f5"}}>{tx.party}</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:10,color:"#3a7a9c"}}>{fmtDate(tx.date)}</span>
+                    <button onClick={()=>setDeleteConfirm(tx.id)} style={{background:"none",border:"none",color:"#401a28",cursor:"pointer",fontSize:14,padding:"0 2px"}}>✕</button>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:16,marginTop:10}}>
+                  {[{l:"QTY",v:`${tx.qty} ₮`},{l:"PRICE",v:`$${tx.price}`},{l:"TOTAL",v:`${tx.type==="buy"?"-":"+"}$${fmt(tx.price*tx.qty)}`,c:tx.type==="buy"?"#e05070":"#2aad72"}].map(r=>(
+                    <div key={r.l}><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2}}>{r.l}</div><div style={{fontSize:14,fontWeight:700,color:r.c||"#e0f0ff"}}>{r.v}</div></div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab==="Avg Cost" && (
+        <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+          <Label>Average Cost Analysis</Label>
+          <div style={{background:"#0a1820",borderRadius:16,padding:"24px",border:"1px solid #1a3040",marginBottom:16,marginTop:12,textAlign:"center"}}>
+            <div style={{fontSize:10,color:"#3a7a9c",letterSpacing:3,marginBottom:8}}>CURRENT AVG COST / USDT</div>
+            <div style={{fontSize:44,fontWeight:700,color:"#7de8c8",letterSpacing:-2}}>${fmt(avgCost)}</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+            {[{l:"USDT HELD",v:`${fmt(portfolio.usdt)} ₮`,c:"#5bc4f5"},{l:"TOTAL INVESTED",v:`$${fmt(avgCost*portfolio.usdt)}`,c:"#f5c05b"}].map(s=>(
+              <Card key={s.l}><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2,marginBottom:6}}>{s.l}</div><div style={{fontSize:18,fontWeight:700,color:s.c}}>{s.v}</div></Card>
+            ))}
+          </div>
+          <Card style={{marginBottom:16}}>
+            <div style={{fontSize:10,color:"#5bc4f5",letterSpacing:2,marginBottom:10}}>HOW IT WORKS</div>
+            <div style={{fontSize:12,color:"#7a9ab0",lineHeight:1.8}}>
+              <b style={{color:"#e0f0ff"}}>Buy:</b> New avg = (Old avg × Old qty + New price × New qty) ÷ Total<br/>
+              <b style={{color:"#e0f0ff"}}>Sell:</b> Avg cost stays same, qty reduces<br/>
+              <b style={{color:"#e0f0ff"}}>Profit:</b> (Sell price − Avg cost) × qty
+            </div>
+          </Card>
+          <Label>Buy History</Label>
+          {transactions.filter(t=>t.type==="buy").length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:13}}>No buys yet</div>}
+          {[...transactions].filter(t=>t.type==="buy").reverse().map(tx=>(
+            <div key={tx.id} style={{display:"flex",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid #1a3040"}}>
+              <div><div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{tx.qty} ₮ @ ${tx.price}</div><div style={{fontSize:11,color:"#3a7a9c"}}>{tx.party} · {fmtDate(tx.date)}</div></div>
+              <div style={{fontSize:13,color:"#f5c05b",fontWeight:700}}>${fmt(tx.price*tx.qty)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab==="Stocks" && (
+        <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+          <Label>Portfolio Stocks</Label>
+          <div style={{display:"flex",flexDirection:"column",gap:14,marginTop:12}}>
+            <div style={{background:"linear-gradient(135deg,#0a1e14,#0d3d2a)",borderRadius:16,padding:"22px",border:"1px solid #2aad72"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><div style={{fontSize:9,color:"#2aad72",letterSpacing:3,marginBottom:8}}>USDT BALANCE</div><div style={{fontSize:36,fontWeight:700,color:"#7de8c8",letterSpacing:-2}}>{fmt(portfolio.usdt)}</div><div style={{fontSize:12,color:"#2aad72"}}>Tether USD</div></div>
+                <div style={{fontSize:48,opacity:0.2}}>₮</div>
+              </div>
+            </div>
+            <div style={{background:"linear-gradient(135deg,#0a1420,#0d2a3d)",borderRadius:16,padding:"22px",border:"1px solid #5bc4f5"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><div style={{fontSize:9,color:"#5bc4f5",letterSpacing:3,marginBottom:8}}>CASH BALANCE</div><div style={{fontSize:36,fontWeight:700,color:"#a0d8f5",letterSpacing:-2}}>${fmt(portfolio.cash)}</div><div style={{fontSize:12,color:"#5bc4f5"}}>Available Cash</div></div>
+                <div style={{fontSize:48,opacity:0.2}}>$</div>
+              </div>
+            </div>
+            <Card>
+              <Label>Summary</Label>
+              {[
+                {l:"Total Bought",v:`${fmt(transactions.filter(t=>t.type==="buy").reduce((a,t)=>a+t.qty,0))} ₮`,c:"#2aad72"},
+                {l:"Total Sold",v:`${fmt(transactions.filter(t=>t.type==="sell").reduce((a,t)=>a+t.qty,0))} ₮`,c:"#e05070"},
+                {l:"Net Position",v:`${fmt(portfolio.usdt)} ₮`,c:"#7de8c8"},
+                {l:"Avg Cost",v:`$${fmt(avgCost)}`,c:"#f5c05b"},
+                {l:"Total Transactions",v:transactions.length,c:"#5bc4f5"},
+              ].map(r=>(
+                <div key={r.l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #1a3040"}}>
+                  <span style={{fontSize:12,color:"#7a9ab0"}}>{r.l}</span>
+                  <span style={{fontSize:13,fontWeight:700,color:r.c}}>{r.v}</span>
+                </div>
+              ))}
+            </Card>
+          </div>
+        </div>
+      )}
+      {tab==="Profit" && (
+        <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+          <Label>Profit & Loss</Label>
+          <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:12,marginBottom:20}}>
+            {[{label:"Today",value:profits.today,icon:"◈"},{label:"This Week",value:profits.weekly,icon:"◉"},{label:"This Month",value:profits.monthly,icon:"◍"},{label:"All Time",value:profits.allTime,icon:"◎"}].map(p=>(
+              <div key={p.label} style={{background:"#0a1820",borderRadius:14,padding:"14px 16px",border:`1px solid ${p.value>=0?"#1a4030":"#401a28"}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:16,color:p.value>=0?"#2aad72":"#e05070"}}>{p.icon}</span>
+                  <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2}}>{p.label.toUpperCase()}</div><div style={{fontSize:12,fontWeight:600,color:"#e0f0ff"}}>Realized P&L</div></div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:20,fontWeight:700,color:p.value>=0?"#2aad72":"#e05070"}}>{p.value>=0?"+":"-"}${fmt(Math.abs(p.value))}</div>
+                  <div style={{fontSize:9,color:"#3a7a9c"}}>{p.value>=0?"▲ Profit":"▼ Loss"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <Card style={{marginBottom:20}}>
+            <Label>Cumulative Profit Graph</Label>
+            <div style={{marginTop:8}}><LineChart data={profitGraphData} color={profits.allTime>=0?"#7de8c8":"#e05070"}/></div>
+          </Card>
+          <Card style={{marginBottom:16}}>
+            <Label>Who Bought From You (Sell Volume)</Label>
+            <div style={{marginTop:12}}><PieChart data={partyData.buyerList}/></div>
+          </Card>
+          <Card style={{marginBottom:16}}>
+            <Label>Who Sold To You (Buy Volume)</Label>
+            <div style={{marginTop:12}}><PieChart data={partyData.sellerList}/></div>
+          </Card>
+          <Label>Sell History (P&L per trade)</Label>
+          {(()=>{
+            let rc=0,ru=0; const rows=[];
+            [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
+              if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
+              else{const avg=ru>0?rc/ru:0;rows.push({tx,avg,profit:(tx.price-avg)*tx.qty});rc-=avg*tx.qty;ru-=tx.qty;}
+            });
+            if(rows.length===0) return <div style={{color:"#3a7a9c",textAlign:"center",padding:24,fontSize:13}}>No sells yet</div>;
+            return rows.reverse().map(({tx,avg,profit})=>(
+              <div key={tx.id} style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${profit>=0?"#1a4030":"#401a28"}`}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <div><div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮ @ ${tx.price}</div><div style={{fontSize:11,color:"#3a7a9c"}}>Avg ${fmt(avg)} · {tx.party} · {fmtDate(tx.date)}</div></div>
+                  <div style={{fontSize:15,fontWeight:700,color:profit>=0?"#2aad72":"#e05070"}}>{profit>=0?"+":"-"}${fmt(Math.abs(profit))}</div>
+                </div>
+              </div>
+            ));
+          })()}
+        </div>
+      )}
+
+      {tab==="Reports" && (
+        <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+          <Label>Custom Reports</Label>
+          <Card style={{marginTop:12,marginBottom:16}}>
+            <Label>Date Range Filter</Label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:8}}>
+              <div>
+                <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2,marginBottom:6}}>FROM</div>
+                <input type="date" value={reportFrom} onChange={e=>setReportFrom(e.target.value)} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:8,padding:"10px",color:"#e0f0ff",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2,marginBottom:6}}>TO</div>
+                <input type="date" value={reportTo} onChange={e=>setReportTo(e.target.value)} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:8,padding:"10px",color:"#e0f0ff",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
+              </div>
+            </div>
+            {(reportFrom||reportTo)&&(
+              <button onClick={()=>{setReportFrom("");setReportTo("");}} style={{marginTop:10,background:"none",border:"1px solid #1a3040",borderRadius:6,padding:"6px 12px",color:"#3a7a9c",fontSize:11,fontFamily:"inherit",cursor:"pointer"}}>✕ Clear Filter</button>
+            )}
+          </Card>
+          <div style={{background:"#0a1820",borderRadius:14,padding:"18px",border:`1px solid ${reportData.profit>=0?"#1a4030":"#401a28"}`,marginBottom:16}}>
+            <div style={{fontSize:10,color:"#3a7a9c",letterSpacing:3,marginBottom:6}}>{reportFrom||reportTo?`PROFIT: ${reportFrom||"start"} → ${reportTo||"now"}`:"ALL TIME PROFIT"}</div>
+            <div style={{fontSize:36,fontWeight:700,color:reportData.profit>=0?"#2aad72":"#e05070"}}>{reportData.profit>=0?"+":"-"}${fmt(Math.abs(reportData.profit))}</div>
+            <div style={{fontSize:11,color:"#3a7a9c",marginTop:4}}>{reportData.filtered.length} transactions in range</div>
+          </div>
+          <Card style={{marginBottom:16}}>
+            <Label>Party Ranking (in range)</Label>
+            {reportData.partyList.length===0&&<div style={{color:"#3a7a9c",fontSize:12,padding:"12px 0"}}>No data in selected range</div>}
+            {reportData.partyList.map((p,i)=>(
+              <div key={p.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:"1px solid #1a3040"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:24,height:24,borderRadius:6,background:i===0?"#f5c05b":i===1?"#7a9ab0":"#1a3040",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:i<2?"#070e14":"#3a7a9c"}}>{i+1}</div>
+                  <div><div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{p.name}</div>
+                  <div style={{fontSize:10,color:"#3a7a9c"}}>{p.buyQty>0&&`Sold ${fmt(p.buyQty)}₮ to you`}{p.buyQty>0&&p.sellQty>0&&" · "}{p.sellQty>0&&`Bought ${fmt(p.sellQty)}₮ from you`}</div></div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  {p.buyQty>0&&<div style={{fontSize:12,color:"#f5c05b"}}>${fmt(p.buyVal)}</div>}
+                  {p.sellQty>0&&<div style={{fontSize:12,color:"#5bc4f5"}}>${fmt(p.sellVal)}</div>}
+                </div>
+              </div>
+            ))}
+          </Card>
+          <Label>Transactions in Range</Label>
+          {reportData.filtered.length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:13}}>No transactions in selected range</div>}
+          {[...reportData.filtered].reverse().map(tx=>(
+            <div key={tx.id} style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${tx.type==="buy"?"#1a4030":"#401a28"}`}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:9,fontWeight:700,color:tx.type==="buy"?"#2aad72":"#e05070",background:tx.type==="buy"?"#0d3d2a":"#3d0d1a",padding:"3px 7px",borderRadius:4}}>{tx.type.toUpperCase()}</span>
+                  <span style={{fontSize:12,color:"#5bc4f5"}}>{tx.party}</span>
+                </div>
+                <span style={{fontSize:10,color:"#3a7a9c"}}>{fmtDate(tx.date)}</span>
+              </div>
+              <div style={{display:"flex",gap:16,marginTop:8}}>
+                <div><div style={{fontSize:9,color:"#3a7a9c"}}>QTY</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮</div></div>
+                <div><div style={{fontSize:9,color:"#3a7a9c"}}>PRICE</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>${tx.price}</div></div>
+                <div><div style={{fontSize:9,color:"#3a7a9c"}}>TOTAL</div><div style={{fontSize:14,fontWeight:700,color:tx.type==="buy"?"#e05070":"#2aad72"}}>{tx.type==="buy"?"-":"+"}${fmt(tx.price*tx.qty)}</div></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal open={!!txModal} onClose={closeModal}>
+        <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:3,marginBottom:4}}>NEW TRANSACTION</div>
+        <div style={{fontSize:20,fontWeight:700,marginBottom:20,color:isBuy?"#2aad72":"#e05070"}}>{isBuy?"▲ BUY USDT":"▼ SELL USDT"}</div>
+        {[{key:"price",label:"Price (per USDT)",placeholder:"e.g. 101.50",type:"number"},{key:"qty",label:"Quantity (USDT)",placeholder:"e.g. 500",type:"number"},{key:"party",label:isBuy?"Seller Name":"Buyer Name",placeholder:"e.g. Ahmed",type:"text"}].map(f=>(
+          <div key={f.key} style={{marginBottom:14}}>
+            <Label>{f.label}</Label>
+            <input type={f.type} inputMode={f.type==="number"?"decimal":"text"} placeholder={f.placeholder} value={form[f.key]} onChange={e=>{setForm(p=>({...p,[f.key]:e.target.value}));setError("");}} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"14px 16px",color:"#e0f0ff",fontSize:16,fontFamily:"inherit",outline:"none"}}/>
+          </div>
+        ))}
+        {previewAvg&&(
+          <div style={{background:"#0a2a1a",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1a5030"}}>
+            <div style={{fontSize:9,color:"#2aad72",letterSpacing:2,marginBottom:4}}>PREVIEW</div>
+            <div style={{fontSize:13,color:"#7de8c8"}}>New avg cost: <b>${fmt(previewAvg)}</b> <span style={{color:"#3a7a9c"}}>(was ${fmt(avgCost)})</span></div>
+            <div style={{fontSize:12,color:"#5bc4f5",marginTop:4}}>New USDT total: {fmt(portfolio.usdt+parseFloat(form.qty||0))} ₮</div>
+          </div>
+        )}
+        {form.price&&form.qty&&parseFloat(form.price)>0&&parseFloat(form.qty)>0&&(
+          <div style={{background:"#0a1820",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1a3040"}}>
+            <div style={{fontSize:12,color:"#7a9ab0"}}>Total: <b style={{color:"#e0f0ff"}}>${fmt(parseFloat(form.price)*parseFloat(form.qty))}</b></div>
+          </div>
+        )}
+        {error&&<div style={{color:"#e05070",fontSize:12,marginBottom:12,background:"#2a0a10",padding:"10px 14px",borderRadius:8}}>{error}</div>}
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={closeModal} style={{flex:1,padding:"14px",borderRadius:10,background:"#0a1820",border:"1px solid #1a3040",color:"#7a9ab0",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>CANCEL</button>
+          <button onClick={handleSubmit} style={{flex:2,padding:"14px",borderRadius:10,background:isBuy?"linear-gradient(135deg,#0d3d2a,#1a6b48)":"linear-gradient(135deg,#3d0d1a,#6b1a2a)",border:`1px solid ${isBuy?"#2aad72":"#ad2a4a"}`,color:isBuy?"#2aad72":"#e05070",fontSize:13,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer"}}>CONFIRM {txModal?.toUpperCase()}</button>
+        </div>
+      </Modal>
+
+      <Modal open={!!deleteConfirm} onClose={()=>setDeleteConfirm(null)}>
+        <div style={{fontSize:18,fontWeight:700,color:"#e05070",marginBottom:12}}>Delete Transaction?</div>
+        <div style={{fontSize:13,color:"#7a9ab0",marginBottom:24}}>This will permanently delete from Firebase and recalculate all balances.</div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,padding:"14px",borderRadius:10,background:"#0a1820",border:"1px solid #1a3040",color:"#7a9ab0",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>CANCEL</button>
+          <button onClick={()=>handleDelete(deleteConfirm)} style={{flex:2,padding:"14px",borderRadius:10,background:"linear-gradient(135deg,#3d0d1a,#6b1a2a)",border:"1px solid #ad2a4a",color:"#e05070",fontSize:13,fontWeight:700,letterSpacing:1,fontFamily:"inherit",cursor:"pointer"}}>DELETE</button>
+        </div>
+      </Modal>
+
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+}
+</script>
+</body>
+</html>
