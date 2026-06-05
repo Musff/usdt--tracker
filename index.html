@@ -19,6 +19,7 @@
     @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     .fade-in { animation: fadeIn 0.3s ease; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
   </style>
 </head>
 <body>
@@ -28,7 +29,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   const firebaseConfig = {
     apiKey: "AIzaSyAOMPXSCdfTuyhqfP0OWXo_y0OCpOMLc-w",
     authDomain: "tracker-bcacc.firebaseapp.com",
@@ -46,87 +47,30 @@
   window.__addDoc = addDoc;
   window.__deleteDoc = deleteDoc;
   window.__doc = doc;
+  window.__updateDoc = updateDoc;
   window.__onSnapshot = onSnapshot;
   window.__query = query;
   window.__orderBy = orderBy;
   window.dispatchEvent(new Event('firebase-ready'));
 </script>
 <script type="text/babel">
-const { useState, useMemo, useEffect, useRef } = React;
+const { useState, useMemo, useEffect } = React;
+const TX_TYPES = {
+  buy:        { label:"BUY",        color:"#2aad72", bg:"#0d3d2a", icon:"▲" },
+  sell:       { label:"SELL",       color:"#e05070", bg:"#3d0d1a", icon:"▼" },
+  capital:    { label:"CAPITAL",    color:"#f5c05b", bg:"#3d2a00", icon:"+" },
+  loan_given: { label:"LOAN GIVEN", color:"#a78bfa", bg:"#2a1a4a", icon:"↑" },
+  loan_back:  { label:"LOAN BACK",  color:"#34d399", bg:"#0a3a2a", icon:"↓" },
+};
 const TABS = ["Transactions","Avg Cost","Stocks","Profit","Reports"];
-const fmt = (n) => Number(n || 0).toFixed(2);
-const fmtDate = (d) => new Date(d).toLocaleDateString();
-  function PieChart({ data, size = 180 }) {
-  if (!data || data.length === 0) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20}}>No data</div>;
-  const total = data.reduce((s, d) => s + d.value, 0);
-  if (total === 0) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20}}>No data</div>;
-  let angle = -Math.PI / 2;
-  const cx = size / 2, cy = size / 2, r = size / 2 - 10;
-  const slices = data.map(d => {
-    const start = angle;
-    const sweep = (d.value / total) * 2 * Math.PI;
-    angle += sweep;
-    const x1 = cx + r * Math.cos(start), y1 = cy + r * Math.sin(start);
-    const x2 = cx + r * Math.cos(start + sweep), y2 = cy + r * Math.sin(start + sweep);
-    const large = sweep > Math.PI ? 1 : 0;
-    return { ...d, path: `M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} Z`, pct: ((d.value/total)*100).toFixed(1) };
-  });
-  return (
-    <div>
-      <svg width={size} height={size} style={{display:"block",margin:"0 auto"}}>
-        {slices.map((s,i) => <path key={i} d={s.path} fill={s.color} stroke="#070e14" strokeWidth="2"/>)}
-      </svg>
-      <div style={{display:"flex",flexWrap:"wrap",gap:"8px 16px",marginTop:12,justifyContent:"center"}}>
-        {slices.map((s,i) => (
-          <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
-            <div style={{width:10,height:10,borderRadius:2,background:s.color,flexShrink:0}}/>
-            <span style={{color:"#e0f0ff"}}>{s.label}</span>
-            <span style={{color:"#3a7a9c"}}>{s.pct}%</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-function LineChart({ data, color="#7de8c8", height=120 }) {
-  if (!data || data.length < 2) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:12}}>Need more sell transactions for graph</div>;
-  const vals = data.map(d => d.value);
-  const min = Math.min(...vals), max = Math.max(...vals);
-  const range = max - min || 1;
-  const w = 320, h = height, pad = 24;
-  const pts = data.map((d, i) => {
-    const x = pad + (i / (data.length - 1)) * (w - pad * 2);
-    const y = h - pad - ((d.value - min) / range) * (h - pad * 2);
-    return `${x},${y}`;
-  });
-  const polyline = pts.join(" ");
-  const areaPath = `M${pts[0]} L${pts.join(" L")} L${pad + (w - pad*2)},${h-pad} L${pad},${h-pad} Z`;
-  return (
-    <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible"}}>
-      <defs>
-        <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3"/>
-          <stop offset="100%" stopColor={color} stopOpacity="0"/>
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill="url(#lg)"/>
-      <polyline points={polyline} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round"/>
-      {data.map((d,i) => {
-        const [x,y] = pts[i].split(",");
-        return <circle key={i} cx={x} cy={y} r="3" fill={color}/>;
-      })}
-      <text x={pad} y={h-6} fill="#3a7a9c" fontSize="9">{data[0]?.label}</text>
-      <text x={w-pad} y={h-6} fill="#3a7a9c" fontSize="9" textAnchor="end">{data[data.length-1]?.label}</text>
-      <text x={pad-2} y={pad} fill="#3a7a9c" fontSize="9" textAnchor="end">${fmt(max)}</text>
-      <text x={pad-2} y={h-pad} fill="#3a7a9c" fontSize="9" textAnchor="end">${fmt(min)}</text>
-    </svg>
-  );
-}
-function Modal({ open, onClose, children }) {
+const fmt = (n) => Number(n||0).toFixed(2);
+const fmtDate = (d) => new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+const fmtTime = (d) => new Date(d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  function Modal({ open, onClose, children }) {
   if (!open) return null;
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:50,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} className="slide-up" style={{background:"#0f1923",borderRadius:"20px 20px 0 0",padding:"24px 20px 44px",width:"100%",maxWidth:480,border:"1px solid #1e3a4a",maxHeight:"90vh",overflowY:"auto"}}>
+      <div onClick={e=>e.stopPropagation()} className="slide-up" style={{background:"#0f1923",borderRadius:"20px 20px 0 0",padding:"24px 20px 44px",width:"100%",maxWidth:480,border:"1px solid #1e3a4a",maxHeight:"92vh",overflowY:"auto"}}>
         {children}
       </div>
     </div>
@@ -138,160 +82,357 @@ function Label({ children }) {
 function Card({ children, style }) {
   return <div style={{background:"#0a1820",borderRadius:12,padding:"14px 16px",border:"1px solid #1a3040",...style}}>{children}</div>;
 }
+function Input({ label, value, onChange, type="text", placeholder="" }) {
+  return (
+    <div style={{marginBottom:14}}>
+      <Label>{label}</Label>
+      <input type={type} inputMode={type==="number"?"decimal":"text"} placeholder={placeholder} value={value} onChange={e=>onChange(e.target.value)}
+        style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"13px 16px",color:"#e0f0ff",fontSize:15,fontFamily:"inherit",outline:"none"}}/>
+    </div>
+  );
+}
+function PieChart({ data, size=180 }) {
+  if(!data||data.length===0||data.reduce((s,d)=>s+d.value,0)===0) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:12}}>No data yet</div>;
+  const total=data.reduce((s,d)=>s+d.value,0);
+  let angle=-Math.PI/2;
+  const cx=size/2,cy=size/2,r=size/2-10;
+  const slices=data.map(d=>{
+    const start=angle,sweep=(d.value/total)*2*Math.PI;
+    angle+=sweep;
+    const x1=cx+r*Math.cos(start),y1=cy+r*Math.sin(start);
+    const x2=cx+r*Math.cos(start+sweep),y2=cy+r*Math.sin(start+sweep);
+    return{...d,path:`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${sweep>Math.PI?1:0},1 ${x2},${y2} Z`,pct:((d.value/total)*100).toFixed(1)};
+  });
+  return (
+    <div>
+      <svg width={size} height={size} style={{display:"block",margin:"0 auto"}}>
+        {slices.map((s,i)=><path key={i} d={s.path} fill={s.color} stroke="#070e14" strokeWidth="2"/>)}
+      </svg>
+      <div style={{display:"flex",flexWrap:"wrap",gap:"8px 16px",marginTop:12,justifyContent:"center"}}>
+        {slices.map((s,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
+            <div style={{width:10,height:10,borderRadius:2,background:s.color}}/>
+            <span style={{color:"#e0f0ff"}}>{s.label}</span>
+            <span style={{color:"#3a7a9c"}}>{s.pct}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function LineChart({ data, color="#7de8c8", height=120 }) {
+  if(!data||data.length<2) return <div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:12}}>Need more sell transactions for graph</div>;
+  const vals=data.map(d=>d.value),min=Math.min(...vals),max=Math.max(...vals),range=max-min||1;
+  const w=320,h=height,pad=28;
+  const pts=data.map((d,i)=>{
+    const x=pad+(i/(data.length-1))*(w-pad*2);
+    const y=h-pad-((d.value-min)/range)*(h-pad*2);
+    return`${x},${y}`;
+  });
+  const areaPath=`M${pts[0]} L${pts.join(" L")} L${pad+(w-pad*2)},${h-pad} L${pad},${h-pad} Z`;
+  return (
+    <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible"}}>
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.3"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs>
+      <path d={areaPath} fill="url(#lg)"/>
+      <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round"/>
+      {data.map((d,i)=>{const[x,y]=pts[i].split(",");return<circle key={i} cx={x} cy={y} r="3" fill={color}/>;})}
+      <text x={pad} y={h-6} fill="#3a7a9c" fontSize="9">{data[0]?.label}</text>
+      <text x={w-pad} y={h-6} fill="#3a7a9c" fontSize="9" textAnchor="end">{data[data.length-1]?.label}</text>
+      <text x={pad-2} y={pad} fill="#3a7a9c" fontSize="9" textAnchor="end">₹{fmt(max)}</text>
+      <text x={pad-2} y={h-pad} fill="#3a7a9c" fontSize="9" textAnchor="end">₹{fmt(min)}</text>
+    </svg>
+  );
+}
+  function TxFormModal({ open, onClose, mode, editTx, onSave }) {
+  const isEdit = mode === "edit";
+  const [txType, setTxType] = useState(editTx?.type || "buy");
+  const [price, setPrice] = useState(editTx?.price?.toString() || "");
+  const [qty, setQty] = useState(editTx?.qty?.toString() || "");
+  const [amount, setAmount] = useState(editTx?.amount?.toString() || "");
+  const [party, setParty] = useState(editTx?.party || "");
+  const [note, setNote] = useState(editTx?.note || "");
+  const [assetType, setAssetType] = useState(editTx?.assetType || "cash");
+  const [date, setDate] = useState(editTx ? new Date(editTx.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setTxType(editTx?.type || "buy");
+      setPrice(editTx?.price?.toString() || "");
+      setQty(editTx?.qty?.toString() || "");
+      setAmount(editTx?.amount?.toString() || "");
+      setParty(editTx?.party || "");
+      setNote(editTx?.note || "");
+      setAssetType(editTx?.assetType || "cash");
+      setDate(editTx ? new Date(editTx.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]);
+      setError("");
+    }
+  }, [open, editTx]);
+
+  const cfg = TX_TYPES[txType] || TX_TYPES.buy;
+
+  const handleSave = () => {
+    setError("");
+    const txDate = new Date(date).toISOString();
+    if (txType==="buy"||txType==="sell") {
+      const p=parseFloat(price),q=parseFloat(qty);
+      if(!p||!q||!party.trim()){setError("Fill all fields");return;}
+      onSave({type:txType,price:p,qty:q,party:party.trim(),note,date:txDate});
+    } else if (txType==="capital") {
+      const a=parseFloat(amount);
+      if(!a){setError("Enter amount");return;}
+      onSave({type:"capital",amount:a,assetType,note,date:txDate,party:""});
+    } else if (txType==="loan_given"||txType==="loan_back") {
+      const a=parseFloat(amount);
+      if(!a||!party.trim()){setError("Fill amount and name");return;}
+      onSave({type:txType,amount:a,assetType,party:party.trim(),note,date:txDate});
+    }
+  };
+
+  if (!open) return null;
+  return (
+    <Modal open={open} onClose={onClose}>
+      <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:3,marginBottom:4}}>{isEdit?"EDIT TRANSACTION":"NEW TRANSACTION"}</div>
+      {!isEdit && (
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:20}}>
+          {Object.entries(TX_TYPES).map(([key,c])=>(
+            <button key={key} onClick={()=>{setTxType(key);setError("");}} style={{padding:"8px 12px",borderRadius:8,fontFamily:"inherit",fontSize:10,fontWeight:700,letterSpacing:1,cursor:"pointer",background:txType===key?c.bg:"#0a1820",border:`1px solid ${txType===key?c.color:"#1a3040"}`,color:txType===key?c.color:"#3a7a9c"}}>{c.icon} {c.label}</button>
+          ))}
+        </div>
+      )}
+      <div style={{fontSize:18,fontWeight:700,marginBottom:20,color:cfg.color}}>{cfg.icon} {cfg.label}</div>
+      {(txType==="buy"||txType==="sell") && (
+        <>
+          <Input label="Price (per USDT)" value={price} onChange={setPrice} type="number" placeholder="e.g. 89.50"/>
+          <Input label="Quantity (USDT)" value={qty} onChange={setQty} type="number" placeholder="e.g. 500"/>
+          <Input label={txType==="buy"?"Seller Name":"Buyer Name"} value={party} onChange={setParty} placeholder="e.g. Ahmed"/>
+        </>
+      )}
+      {txType==="capital" && (
+        <>
+          <div style={{marginBottom:14}}>
+            <Label>Asset Type</Label>
+            <div style={{display:"flex",gap:10}}>
+              {[["cash","₹ Cash"],["usdt","USDT ₮"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setAssetType(v)} style={{flex:1,padding:"10px",borderRadius:8,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer",background:assetType===v?"#1a3d2a":"#0a1820",border:`1px solid ${assetType===v?"#f5c05b":"#1a3040"}`,color:assetType===v?"#f5c05b":"#3a7a9c"}}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <Input label={assetType==="cash"?"Cash Amount (₹)":"USDT Amount"} value={amount} onChange={setAmount} type="number" placeholder="e.g. 50000"/>
+          <Input label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. Initial capital"/>
+        </>
+      )}
+      {(txType==="loan_given"||txType==="loan_back") && (
+        <>
+          <div style={{marginBottom:14}}>
+            <Label>Asset Type</Label>
+            <div style={{display:"flex",gap:10}}>
+              {[["cash","₹ Cash"],["usdt","USDT ₮"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setAssetType(v)} style={{flex:1,padding:"10px",borderRadius:8,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer",background:assetType===v?"#1a2a3d":"#0a1820",border:`1px solid ${assetType===v?"#a78bfa":"#1a3040"}`,color:assetType===v?"#a78bfa":"#3a7a9c"}}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <Input label="Amount" value={amount} onChange={setAmount} type="number" placeholder="e.g. 10000"/>
+          <Input label="Person Name" value={party} onChange={setParty} placeholder="e.g. Ravi"/>
+          <Input label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. personal loan"/>
+        </>
+      )}
+      <div style={{marginBottom:14}}>
+        <Label>Date</Label>
+        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"13px 16px",color:"#e0f0ff",fontSize:15,fontFamily:"inherit",outline:"none"}}/>
+      </div>
+      {error&&<div style={{color:"#e05070",fontSize:12,marginBottom:12,background:"#2a0a10",padding:"10px 14px",borderRadius:8}}>{error}</div>}
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:10,background:"#0a1820",border:"1px solid #1a3040",color:"#7a9ab0",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>CANCEL</button>
+        <button onClick={handleSave} style={{flex:2,padding:"14px",borderRadius:10,background:cfg.bg,border:`1px solid ${cfg.color}`,color:cfg.color,fontSize:13,fontWeight:700,letterSpacing:1,fontFamily:"inherit",cursor:"pointer"}}>{isEdit?"SAVE CHANGES":"CONFIRM"}</button>
+      </div>
+    </Modal>
+  );
+}
+function TxCard({ tx, onEdit, onDelete }) {
+  const cfg=TX_TYPES[tx.type]||TX_TYPES.buy;
+  const isBuySell=tx.type==="buy"||tx.type==="sell";
+  const total=isBuySell?tx.price*tx.qty:tx.amount;
+  const cashEffect=tx.type==="buy"?-total:tx.type==="sell"?total:tx.type==="capital"&&tx.assetType==="cash"?total:tx.type==="loan_back"&&tx.assetType==="cash"?total:tx.type==="loan_given"&&tx.assetType==="cash"?-total:0;
+  const usdtEffect=tx.type==="buy"?tx.qty:tx.type==="sell"?-tx.qty:tx.type==="capital"&&tx.assetType==="usdt"?tx.amount:tx.type==="loan_back"&&tx.assetType==="usdt"?tx.amount:tx.type==="loan_given"&&tx.assetType==="usdt"?-tx.amount:0;
+  return (
+    <div style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${cfg.bg}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:9,fontWeight:700,letterSpacing:1,color:cfg.color,background:cfg.bg,padding:"3px 8px",borderRadius:4}}>{cfg.icon} {cfg.label}</span>
+          {tx.party&&<span style={{fontSize:12,color:"#5bc4f5"}}>{tx.party}</span>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <button onClick={()=>onEdit(tx)} style={{background:"none",border:"1px solid #1a3040",borderRadius:6,color:"#5bc4f5",cursor:"pointer",fontSize:10,padding:"3px 8px",fontFamily:"inherit"}}>✎ Edit</button>
+          <button onClick={()=>onDelete(tx.id)} style={{background:"none",border:"1px solid #401a28",borderRadius:6,color:"#e05070",cursor:"pointer",fontSize:10,padding:"3px 8px",fontFamily:"inherit"}}>✕</button>
+        </div>
+      </div>
+      <div style={{fontSize:10,color:"#3a7a9c",marginBottom:8}}>📅 {fmtDate(tx.date)} · {fmtTime(tx.date)}</div>
+      <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+        {isBuySell&&(
+          <>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>QTY</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>PRICE</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>₹{tx.price}</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>TOTAL</div><div style={{fontSize:14,fontWeight:700,color:tx.type==="buy"?"#e05070":"#2aad72"}}>₹{fmt(total)}</div></div>
+          </>
+        )}
+        {!isBuySell&&(
+          <>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>AMOUNT</div><div style={{fontSize:14,fontWeight:700,color:cfg.color}}>{tx.assetType==="usdt"?"":"₹"}{fmt(tx.amount)}{tx.assetType==="usdt"?" ₮":""}</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>TYPE</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{tx.assetType==="usdt"?"USDT":"Cash"}</div></div>
+          </>
+        )}
+      </div>
+      <div style={{display:"flex",gap:10,marginTop:8,flexWrap:"wrap"}}>
+        {cashEffect!==0&&<span style={{fontSize:10,color:cashEffect>0?"#2aad72":"#e05070",background:cashEffect>0?"#0a2a14":"#2a0a10",padding:"2px 8px",borderRadius:4}}>{cashEffect>0?"+":""}{fmt(cashEffect)} ₹</span>}
+        {usdtEffect!==0&&<span style={{fontSize:10,color:usdtEffect>0?"#5bc4f5":"#e05070",background:usdtEffect>0?"#0a1a2a":"#2a0a10",padding:"2px 8px",borderRadius:4}}>{usdtEffect>0?"+":""}{fmt(usdtEffect)} ₮</span>}
+      </div>
+      {tx.note&&<div style={{fontSize:11,color:"#3a7a9c",marginTop:6}}>📝 {tx.note}</div>}
+    </div>
+  );
+}
   function App() {
   const [tab, setTab] = useState("Transactions");
-  const [txModal, setTxModal] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ price:"", qty:"", party:"" });
-  const [error, setError] = useState("");
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [fbReady, setFbReady] = useState(!!window.__fbReady);
+  const [txFormOpen, setTxFormOpen] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
 
-  useEffect(() => {
-    if (window.__fbReady) { setFbReady(true); return; }
-    const h = () => setFbReady(true);
-    window.addEventListener('firebase-ready', h);
-    return () => window.removeEventListener('firebase-ready', h);
-  }, []);
+  useEffect(()=>{
+    if(window.__fbReady){setFbReady(true);return;}
+    const h=()=>setFbReady(true);
+    window.addEventListener('firebase-ready',h);
+    return()=>window.removeEventListener('firebase-ready',h);
+  },[]);
 
-  useEffect(() => {
-    if (!fbReady || !window.__db) return;
-    const q = window.__query(window.__collection(window.__db, "transactions"), window.__orderBy("date", "asc"));
-    const unsub = window.__onSnapshot(q, snap => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data(), date: new Date(d.data().date) }));
-      setTransactions(docs);
+  useEffect(()=>{
+    if(!fbReady||!window.__db) return;
+    const q=window.__query(window.__collection(window.__db,"transactions"),window.__orderBy("date","asc"));
+    const unsub=window.__onSnapshot(q,snap=>{
+      setTransactions(snap.docs.map(d=>({id:d.id,...d.data(),date:new Date(d.data().date)})));
       setLoading(false);
-    }, err => { console.error(err); setLoading(false); });
+    },err=>{console.error(err);setLoading(false);});
     return unsub;
-  }, [fbReady]);
+  },[fbReady]);
 
-  const portfolio = useMemo(() => {
-    let cash = 0, usdt = 0;
-    transactions.forEach(tx => {
-      if (tx.type==="buy") { cash -= tx.price*tx.qty; usdt += tx.qty; }
-      else { cash += tx.price*tx.qty; usdt -= tx.qty; }
+  const portfolio = useMemo(()=>{
+    let cash=0,usdt=0;
+    transactions.forEach(tx=>{
+      if(tx.type==="buy"){cash-=tx.price*tx.qty;usdt+=tx.qty;}
+      else if(tx.type==="sell"){cash+=tx.price*tx.qty;usdt-=tx.qty;}
+      else if(tx.type==="capital"){if(tx.assetType==="cash")cash+=tx.amount;else usdt+=tx.amount;}
+      else if(tx.type==="loan_given"){if(tx.assetType==="cash")cash-=tx.amount;else usdt-=tx.amount;}
+      else if(tx.type==="loan_back"){if(tx.assetType==="cash")cash+=tx.amount;else usdt+=tx.amount;}
     });
-    return { cash, usdt };
-  }, [transactions]);
+    return{cash,usdt};
+  },[transactions]);
 
-  const avgCost = useMemo(() => {
-    let cost=0, qty=0;
-    transactions.forEach(tx => {
-      if (tx.type==="buy") { cost+=tx.price*tx.qty; qty+=tx.qty; }
-      else { const avg=qty>0?cost/qty:0; cost-=avg*tx.qty; qty-=tx.qty; }
+  const avgCost = useMemo(()=>{
+    let cost=0,qty=0;
+    transactions.forEach(tx=>{
+      if(tx.type==="buy"){cost+=tx.price*tx.qty;qty+=tx.qty;}
+      else if(tx.type==="sell"){const avg=qty>0?cost/qty:0;cost-=avg*tx.qty;qty-=tx.qty;}
     });
-    return qty>0 ? cost/qty : 0;
-  }, [transactions]);
+    return qty>0?cost/qty:0;
+  },[transactions]);
 
-  const profits = useMemo(() => {
-    const now = Date.now(), DAY=86400000;
-    let today=0, weekly=0, monthly=0, allTime=0;
-    let rc=0, ru=0;
-    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx => {
-      if (tx.type==="buy") { rc+=tx.price*tx.qty; ru+=tx.qty; }
-      else {
-        const avg=ru>0?rc/ru:0, p=(tx.price-avg)*tx.qty;
+  const profits = useMemo(()=>{
+    const now=Date.now(),DAY=86400000;
+    let today=0,weekly=0,monthly=0,allTime=0,rc=0,ru=0;
+    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
+      if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
+      else if(tx.type==="sell"){
+        const avg=ru>0?rc/ru:0,p=(tx.price-avg)*tx.qty;
         const age=now-new Date(tx.date).getTime();
         allTime+=p;
-        if(age<=DAY) today+=p;
-        if(age<=DAY*7) weekly+=p;
-        if(age<=DAY*30) monthly+=p;
-        rc-=avg*tx.qty; ru-=tx.qty;
+        if(age<=DAY)today+=p;
+        if(age<=DAY*7)weekly+=p;
+        if(age<=DAY*30)monthly+=p;
+        rc-=avg*tx.qty;ru-=tx.qty;
       }
     });
-    return { today, weekly, monthly, allTime };
-  }, [transactions]);
+    return{today,weekly,monthly,allTime};
+  },[transactions]);
 
-  const profitGraphData = useMemo(() => {
-    let rc=0, ru=0;
-    const byDay = {};
-    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx => {
-      if(tx.type==="buy") { rc+=tx.price*tx.qty; ru+=tx.qty; }
-      else {
-        const avg=ru>0?rc/ru:0, p=(tx.price-avg)*tx.qty;
+  const profitGraphData = useMemo(()=>{
+    let rc=0,ru=0;const byDay={};
+    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
+      if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
+      else if(tx.type==="sell"){
+        const avg=ru>0?rc/ru:0,p=(tx.price-avg)*tx.qty;
         const key=new Date(tx.date).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
         byDay[key]=(byDay[key]||0)+p;
-        rc-=avg*tx.qty; ru-=tx.qty;
+        rc-=avg*tx.qty;ru-=tx.qty;
       }
     });
-    let cumulative=0;
-    return Object.entries(byDay).map(([label,val])=>{ cumulative+=val; return {label,value:cumulative}; });
-  }, [transactions]);
+    let cum=0;
+    return Object.entries(byDay).map(([label,val])=>{cum+=val;return{label,value:cum};});
+  },[transactions]);
 
-  const partyData = useMemo(() => {
-    const buyers={}, sellers={};
-    transactions.forEach(tx => {
-      if(tx.type==="sell") buyers[tx.party]=(buyers[tx.party]||0)+tx.qty;
-      else sellers[tx.party]=(sellers[tx.party]||0)+tx.qty;
+  const partyData = useMemo(()=>{
+    const buyers={},sellers={};
+    transactions.forEach(tx=>{
+      if(tx.type==="sell")buyers[tx.party]=(buyers[tx.party]||0)+tx.qty;
+      else if(tx.type==="buy")sellers[tx.party]=(sellers[tx.party]||0)+tx.qty;
     });
-    const COLORS=["#7de8c8","#5bc4f5","#f5c05b","#e05070","#a78bfa","#34d399","#f97316","#60a5fa"];
-    const buyerList=Object.entries(buyers).map(([label,value],i)=>({label,value,color:COLORS[i%COLORS.length]}));
-    const sellerList=Object.entries(sellers).map(([label,value],i)=>({label,value,color:COLORS[i%COLORS.length]}));
-    return { buyerList, sellerList };
-  }, [transactions]);
+    const C=["#7de8c8","#5bc4f5","#f5c05b","#e05070","#a78bfa","#34d399","#f97316","#60a5fa"];
+    return{
+      buyerList:Object.entries(buyers).map(([label,value],i)=>({label,value,color:C[i%C.length]})),
+      sellerList:Object.entries(sellers).map(([label,value],i)=>({label,value,color:C[i%C.length]}))
+    };
+  },[transactions]);
 
-  const reportData = useMemo(() => {
-    const from = reportFrom ? new Date(reportFrom) : null;
-    const to = reportTo ? new Date(reportTo+"T23:59:59") : null;
-    const filtered = transactions.filter(tx => {
-      const d = new Date(tx.date);
-      if(from && d < from) return false;
-      if(to && d > to) return false;
-      return true;
+  const reportData = useMemo(()=>{
+    const from=reportFrom?new Date(reportFrom):null;
+    const to=reportTo?new Date(reportTo+"T23:59:59"):null;
+    const filtered=transactions.filter(tx=>{
+      const d=new Date(tx.date);
+      return(!from||d>=from)&&(!to||d<=to);
     });
-    let rc=0, ru=0, profit=0;
-    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx => {
-      if(tx.type==="buy") { rc+=tx.price*tx.qty; ru+=tx.qty; }
-      else {
-        const avg=ru>0?rc/ru:0, p=(tx.price-avg)*tx.qty;
+    let rc=0,ru=0,profit=0;
+    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
+      if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
+      else if(tx.type==="sell"){
+        const avg=ru>0?rc/ru:0,p=(tx.price-avg)*tx.qty;
         const d=new Date(tx.date);
-        if((!from||d>=from)&&(!to||d<=to)) profit+=p;
-        rc-=avg*tx.qty; ru-=tx.qty;
+        if((!from||d>=from)&&(!to||d<=to))profit+=p;
+        rc-=avg*tx.qty;ru-=tx.qty;
       }
     });
     const byParty={};
     filtered.forEach(tx=>{
-      if(!byParty[tx.party]) byParty[tx.party]={name:tx.party,buyQty:0,sellQty:0,buyVal:0,sellVal:0};
+      if(!byParty[tx.party])byParty[tx.party]={name:tx.party,buyQty:0,sellQty:0,buyVal:0,sellVal:0};
       if(tx.type==="buy"){byParty[tx.party].buyQty+=tx.qty;byParty[tx.party].buyVal+=tx.price*tx.qty;}
-      else{byParty[tx.party].sellQty+=tx.qty;byParty[tx.party].sellVal+=tx.price*tx.qty;}
+      else if(tx.type==="sell"){byParty[tx.party].sellQty+=tx.qty;byParty[tx.party].sellVal+=tx.price*tx.qty;}
     });
-    const partyList=Object.values(byParty).sort((a,b)=>(b.buyQty+b.sellQty)-(a.buyQty+a.sellQty));
-    return { profit, filtered, partyList };
-  }, [transactions, reportFrom, reportTo]);
+    return{profit,filtered,partyList:Object.values(byParty).sort((a,b)=>(b.buyQty+b.sellQty)-(a.buyQty+a.sellQty))};
+  },[transactions,reportFrom,reportTo]);
 
-  const previewAvg = useMemo(() => {
-    const price=parseFloat(form.price), qty=parseFloat(form.qty);
-    if(!price||!qty||txModal!=="buy") return null;
-    return (avgCost*portfolio.usdt+price*qty)/(portfolio.usdt+qty);
-  }, [form.price,form.qty,txModal,avgCost,portfolio.usdt]);
-
-  const handleSubmit = async () => {
-    const price=parseFloat(form.price), qty=parseFloat(form.qty);
-    if(!price||!qty||!form.party.trim()){setError("Please fill all fields");return;}
-    if(price<=0||qty<=0){setError("Price and quantity must be positive");return;}
-    if(txModal==="sell"&&qty>portfolio.usdt+0.0001){setError(`Not enough USDT. Available: ${fmt(portfolio.usdt)}`);return;}
+  const handleSave = async (data) => {
     try {
-      await window.__addDoc(window.__collection(window.__db,"transactions"),{
-        type:txModal, price, qty, party:form.party.trim(), date:new Date().toISOString()
-      });
-      setForm({price:"",qty:"",party:""});
-      setError("");
-      setTxModal(null);
-    } catch(e){ setError("Save failed: "+e.message); }
+      if(editTx){
+        await window.__updateDoc(window.__doc(window.__db,"transactions",editTx.id),data);
+      } else {
+        await window.__addDoc(window.__collection(window.__db,"transactions"),data);
+      }
+      setTxFormOpen(false);
+      setEditTx(null);
+    } catch(e){alert("Save failed: "+e.message);}
   };
 
   const handleDelete = async (id) => {
-    try { await window.__deleteDoc(window.__doc(window.__db,"transactions",id)); }
-    catch(e){ alert("Delete failed: "+e.message); }
+    try{await window.__deleteDoc(window.__doc(window.__db,"transactions",id));}
+    catch(e){alert("Delete failed: "+e.message);}
     setDeleteConfirm(null);
   };
 
-  const closeModal = () => { setTxModal(null); setError(""); setForm({price:"",qty:"",party:""}); };
-  const sortedTx = [...transactions].sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const isBuy = txModal==="buy";
+  const openEdit=(tx)=>{setEditTx(tx);setTxFormOpen(true);};
+  const openNew=()=>{setEditTx(null);setTxFormOpen(true);};
+  const sortedTx=[...transactions].sort((a,b)=>new Date(b.date)-new Date(a.date));
 
   if(loading) return (
     <div style={{minHeight:"100vh",background:"#070e14",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
@@ -306,10 +447,10 @@ function Card({ children, style }) {
         <div style={{fontSize:24,fontWeight:700,color:"#7de8c8",letterSpacing:-1}}>USDT Tracker</div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:1,background:"#1a3040"}}>
-        {[{label:"Cash",value:`$${fmt(portfolio.cash)}`,color:"#7de8c8"},{label:"USDT",value:`${fmt(portfolio.usdt)} ₮`,color:"#5bc4f5"}].map(s=>(
+        {[{label:"Cash",value:`₹${fmt(portfolio.cash)}`,color:"#7de8c8"},{label:"USDT",value:`${fmt(portfolio.usdt)} ₮`,color:"#5bc4f5"}].map(s=>(
           <div key={s.label} style={{background:"#0a1820",padding:"10px 16px"}}>
             <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2,marginBottom:3}}>{s.label.toUpperCase()}</div>
-            <div style={{fontSize:16,fontWeight:700,color:s.color}}>{s.value}</div>
+            <div style={{fontSize:16,fontWeight:700,color:s.color,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.value}</div>
           </div>
         ))}
       </div>
@@ -321,36 +462,14 @@ function Card({ children, style }) {
 
       {tab==="Transactions" && (
         <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",height:"calc(100vh - 150px)"}}>
-          <div style={{padding:"16px 20px",borderBottom:"1px solid #1a3040",flexShrink:0}}>
+          <div style={{padding:"14px 20px",borderBottom:"1px solid #1a3040",flexShrink:0}}>
             <Label>New Transaction</Label>
-            <div style={{display:"flex",gap:12,marginTop:8}}>
-              {[["buy","▲ BUY","#2aad72","#0d3d2a","#1a6b48"],["sell","▼ SELL","#e05070","#3d0d1a","#6b1a2a"]].map(([type,label,col,g1,g2])=>(
-                <button key={type} onClick={()=>setTxModal(type)} style={{flex:1,padding:"14px",borderRadius:12,background:`linear-gradient(135deg,${g1},${g2})`,border:`1px solid ${col}`,color:col,fontSize:13,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer"}}>{label}</button>
-              ))}
-            </div>
+            <button onClick={openNew} style={{width:"100%",padding:"14px",borderRadius:12,background:"linear-gradient(135deg,#0a1e14,#0d3d2a)",border:"1px solid #2aad72",color:"#2aad72",fontSize:13,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer",marginTop:8}}>+ ADD TRANSACTION</button>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"14px 20px"}}>
             <Label>History ({transactions.length})</Label>
             {sortedTx.length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:"40px 0",fontSize:13}}>No transactions yet.</div>}
-            {sortedTx.map(tx=>(
-              <div key={tx.id} style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${tx.type==="buy"?"#1a4030":"#401a28"}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:9,fontWeight:700,letterSpacing:2,color:tx.type==="buy"?"#2aad72":"#e05070",background:tx.type==="buy"?"#0d3d2a":"#3d0d1a",padding:"3px 7px",borderRadius:4}}>{tx.type.toUpperCase()}</span>
-                    <span style={{fontSize:12,color:"#5bc4f5"}}>{tx.party}</span>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:10,color:"#3a7a9c"}}>{fmtDate(tx.date)}</span>
-                    <button onClick={()=>setDeleteConfirm(tx.id)} style={{background:"none",border:"none",color:"#401a28",cursor:"pointer",fontSize:14,padding:"0 2px"}}>✕</button>
-                  </div>
-                </div>
-                <div style={{display:"flex",gap:16,marginTop:10}}>
-                  {[{l:"QTY",v:`${tx.qty} ₮`},{l:"PRICE",v:`$${tx.price}`},{l:"TOTAL",v:`${tx.type==="buy"?"-":"+"}$${fmt(tx.price*tx.qty)}`,c:tx.type==="buy"?"#e05070":"#2aad72"}].map(r=>(
-                    <div key={r.l}><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2}}>{r.l}</div><div style={{fontSize:14,fontWeight:700,color:r.c||"#e0f0ff"}}>{r.v}</div></div>
-                  ))}
-                </div>
-              </div>
-            ))}
+            {sortedTx.map(tx=><TxCard key={tx.id} tx={tx} onEdit={openEdit} onDelete={(id)=>setDeleteConfirm(id)}/>)}
           </div>
         </div>
       )}
@@ -360,10 +479,10 @@ function Card({ children, style }) {
           <Label>Average Cost Analysis</Label>
           <div style={{background:"#0a1820",borderRadius:16,padding:"24px",border:"1px solid #1a3040",marginBottom:16,marginTop:12,textAlign:"center"}}>
             <div style={{fontSize:10,color:"#3a7a9c",letterSpacing:3,marginBottom:8}}>CURRENT AVG COST / USDT</div>
-            <div style={{fontSize:44,fontWeight:700,color:"#7de8c8",letterSpacing:-2}}>${fmt(avgCost)}</div>
+            <div style={{fontSize:44,fontWeight:700,color:"#7de8c8",letterSpacing:-2}}>₹{fmt(avgCost)}</div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-            {[{l:"USDT HELD",v:`${fmt(portfolio.usdt)} ₮`,c:"#5bc4f5"},{l:"TOTAL INVESTED",v:`$${fmt(avgCost*portfolio.usdt)}`,c:"#f5c05b"}].map(s=>(
+            {[{l:"USDT HELD",v:`${fmt(portfolio.usdt)} ₮`,c:"#5bc4f5"},{l:"TOTAL INVESTED",v:`₹${fmt(avgCost*portfolio.usdt)}`,c:"#f5c05b"}].map(s=>(
               <Card key={s.l}><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2,marginBottom:6}}>{s.l}</div><div style={{fontSize:18,fontWeight:700,color:s.c}}>{s.v}</div></Card>
             ))}
           </div>
@@ -379,8 +498,11 @@ function Card({ children, style }) {
           {transactions.filter(t=>t.type==="buy").length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:13}}>No buys yet</div>}
           {[...transactions].filter(t=>t.type==="buy").reverse().map(tx=>(
             <div key={tx.id} style={{display:"flex",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid #1a3040"}}>
-              <div><div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{tx.qty} ₮ @ ${tx.price}</div><div style={{fontSize:11,color:"#3a7a9c"}}>{tx.party} · {fmtDate(tx.date)}</div></div>
-              <div style={{fontSize:13,color:"#f5c05b",fontWeight:700}}>${fmt(tx.price*tx.qty)}</div>
+              <div>
+                <div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{tx.qty} ₮ @ ₹{tx.price}</div>
+                <div style={{fontSize:11,color:"#3a7a9c"}}>{tx.party} · {fmtDate(tx.date)}</div>
+              </div>
+              <div style={{fontSize:13,color:"#f5c05b",fontWeight:700}}>₹{fmt(tx.price*tx.qty)}</div>
             </div>
           ))}
         </div>
@@ -398,8 +520,8 @@ function Card({ children, style }) {
             </div>
             <div style={{background:"linear-gradient(135deg,#0a1420,#0d2a3d)",borderRadius:16,padding:"22px",border:"1px solid #5bc4f5"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div><div style={{fontSize:9,color:"#5bc4f5",letterSpacing:3,marginBottom:8}}>CASH BALANCE</div><div style={{fontSize:36,fontWeight:700,color:"#a0d8f5",letterSpacing:-2}}>${fmt(portfolio.cash)}</div><div style={{fontSize:12,color:"#5bc4f5"}}>Available Cash</div></div>
-                <div style={{fontSize:48,opacity:0.2}}>$</div>
+                <div><div style={{fontSize:9,color:"#5bc4f5",letterSpacing:3,marginBottom:8}}>CASH BALANCE</div><div style={{fontSize:36,fontWeight:700,color:"#a0d8f5",letterSpacing:-2}}>₹{fmt(portfolio.cash)}</div><div style={{fontSize:12,color:"#5bc4f5"}}>Available Cash</div></div>
+                <div style={{fontSize:48,opacity:0.2}}>₹</div>
               </div>
             </div>
             <Card>
@@ -407,9 +529,12 @@ function Card({ children, style }) {
               {[
                 {l:"Total Bought",v:`${fmt(transactions.filter(t=>t.type==="buy").reduce((a,t)=>a+t.qty,0))} ₮`,c:"#2aad72"},
                 {l:"Total Sold",v:`${fmt(transactions.filter(t=>t.type==="sell").reduce((a,t)=>a+t.qty,0))} ₮`,c:"#e05070"},
+                {l:"Capital Added (Cash)",v:`₹${fmt(transactions.filter(t=>t.type==="capital"&&t.assetType==="cash").reduce((a,t)=>a+t.amount,0))}`,c:"#f5c05b"},
+                {l:"Capital Added (USDT)",v:`${fmt(transactions.filter(t=>t.type==="capital"&&t.assetType==="usdt").reduce((a,t)=>a+t.amount,0))} ₮`,c:"#f5c05b"},
+                {l:"Loans Given",v:`₹${fmt(transactions.filter(t=>t.type==="loan_given"&&t.assetType==="cash").reduce((a,t)=>a+t.amount,0))}`,c:"#a78bfa"},
+                {l:"Loans Returned",v:`₹${fmt(transactions.filter(t=>t.type==="loan_back"&&t.assetType==="cash").reduce((a,t)=>a+t.amount,0))}`,c:"#34d399"},
+                {l:"Avg Cost",v:`₹${fmt(avgCost)}`,c:"#f5c05b"},
                 {l:"Net Position",v:`${fmt(portfolio.usdt)} ₮`,c:"#7de8c8"},
-                {l:"Avg Cost",v:`$${fmt(avgCost)}`,c:"#f5c05b"},
-                {l:"Total Transactions",v:transactions.length,c:"#5bc4f5"},
               ].map(r=>(
                 <div key={r.l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #1a3040"}}>
                   <span style={{fontSize:12,color:"#7a9ab0"}}>{r.l}</span>
@@ -431,7 +556,7 @@ function Card({ children, style }) {
                   <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:2}}>{p.label.toUpperCase()}</div><div style={{fontSize:12,fontWeight:600,color:"#e0f0ff"}}>Realized P&L</div></div>
                 </div>
                 <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:20,fontWeight:700,color:p.value>=0?"#2aad72":"#e05070"}}>{p.value>=0?"+":"-"}${fmt(Math.abs(p.value))}</div>
+                  <div style={{fontSize:20,fontWeight:700,color:p.value>=0?"#2aad72":"#e05070"}}>{p.value>=0?"+":"-"}₹{fmt(Math.abs(p.value))}</div>
                   <div style={{fontSize:9,color:"#3a7a9c"}}>{p.value>=0?"▲ Profit":"▼ Loss"}</div>
                 </div>
               </div>
@@ -451,17 +576,21 @@ function Card({ children, style }) {
           </Card>
           <Label>Sell History (P&L per trade)</Label>
           {(()=>{
-            let rc=0,ru=0; const rows=[];
+            let rc=0,ru=0;const rows=[];
             [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
               if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
-              else{const avg=ru>0?rc/ru:0;rows.push({tx,avg,profit:(tx.price-avg)*tx.qty});rc-=avg*tx.qty;ru-=tx.qty;}
+              else if(tx.type==="sell"){const avg=ru>0?rc/ru:0;rows.push({tx,avg,profit:(tx.price-avg)*tx.qty});rc-=avg*tx.qty;ru-=tx.qty;}
             });
-            if(rows.length===0) return <div style={{color:"#3a7a9c",textAlign:"center",padding:24,fontSize:13}}>No sells yet</div>;
+            if(rows.length===0)return<div style={{color:"#3a7a9c",textAlign:"center",padding:24,fontSize:13}}>No sells yet</div>;
             return rows.reverse().map(({tx,avg,profit})=>(
               <div key={tx.id} style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${profit>=0?"#1a4030":"#401a28"}`}}>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <div><div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮ @ ${tx.price}</div><div style={{fontSize:11,color:"#3a7a9c"}}>Avg ${fmt(avg)} · {tx.party} · {fmtDate(tx.date)}</div></div>
-                  <div style={{fontSize:15,fontWeight:700,color:profit>=0?"#2aad72":"#e05070"}}>{profit>=0?"+":"-"}${fmt(Math.abs(profit))}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮ @ ₹{tx.price}</div>
+                    <div style={{fontSize:11,color:"#3a7a9c"}}>Avg ₹{fmt(avg)} · {tx.party}</div>
+                    <div style={{fontSize:10,color:"#3a7a9c"}}>📅 {fmtDate(tx.date)}</div>
+                  </div>
+                  <div style={{fontSize:15,fontWeight:700,color:profit>=0?"#2aad72":"#e05070"}}>{profit>=0?"+":"-"}₹{fmt(Math.abs(profit))}</div>
                 </div>
               </div>
             ));
@@ -484,13 +613,11 @@ function Card({ children, style }) {
                 <input type="date" value={reportTo} onChange={e=>setReportTo(e.target.value)} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:8,padding:"10px",color:"#e0f0ff",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
               </div>
             </div>
-            {(reportFrom||reportTo)&&(
-              <button onClick={()=>{setReportFrom("");setReportTo("");}} style={{marginTop:10,background:"none",border:"1px solid #1a3040",borderRadius:6,padding:"6px 12px",color:"#3a7a9c",fontSize:11,fontFamily:"inherit",cursor:"pointer"}}>✕ Clear Filter</button>
-            )}
+            {(reportFrom||reportTo)&&<button onClick={()=>{setReportFrom("");setReportTo("");}} style={{marginTop:10,background:"none",border:"1px solid #1a3040",borderRadius:6,padding:"6px 12px",color:"#3a7a9c",fontSize:11,fontFamily:"inherit",cursor:"pointer"}}>✕ Clear Filter</button>}
           </Card>
           <div style={{background:"#0a1820",borderRadius:14,padding:"18px",border:`1px solid ${reportData.profit>=0?"#1a4030":"#401a28"}`,marginBottom:16}}>
             <div style={{fontSize:10,color:"#3a7a9c",letterSpacing:3,marginBottom:6}}>{reportFrom||reportTo?`PROFIT: ${reportFrom||"start"} → ${reportTo||"now"}`:"ALL TIME PROFIT"}</div>
-            <div style={{fontSize:36,fontWeight:700,color:reportData.profit>=0?"#2aad72":"#e05070"}}>{reportData.profit>=0?"+":"-"}${fmt(Math.abs(reportData.profit))}</div>
+            <div style={{fontSize:36,fontWeight:700,color:reportData.profit>=0?"#2aad72":"#e05070"}}>{reportData.profit>=0?"+":"-"}₹{fmt(Math.abs(reportData.profit))}</div>
             <div style={{fontSize:11,color:"#3a7a9c",marginTop:4}}>{reportData.filtered.length} transactions in range</div>
           </div>
           <Card style={{marginBottom:16}}>
@@ -500,12 +627,14 @@ function Card({ children, style }) {
               <div key={p.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:"1px solid #1a3040"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
                   <div style={{width:24,height:24,borderRadius:6,background:i===0?"#f5c05b":i===1?"#7a9ab0":"#1a3040",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:i<2?"#070e14":"#3a7a9c"}}>{i+1}</div>
-                  <div><div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{p.name}</div>
-                  <div style={{fontSize:10,color:"#3a7a9c"}}>{p.buyQty>0&&`Sold ${fmt(p.buyQty)}₮ to you`}{p.buyQty>0&&p.sellQty>0&&" · "}{p.sellQty>0&&`Bought ${fmt(p.sellQty)}₮ from you`}</div></div>
+                  <div>
+                    <div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{p.name}</div>
+                    <div style={{fontSize:10,color:"#3a7a9c"}}>{p.buyQty>0&&`Sold ${fmt(p.buyQty)}₮`}{p.buyQty>0&&p.sellQty>0&&" · "}{p.sellQty>0&&`Bought ${fmt(p.sellQty)}₮`}</div>
+                  </div>
                 </div>
                 <div style={{textAlign:"right"}}>
-                  {p.buyQty>0&&<div style={{fontSize:12,color:"#f5c05b"}}>${fmt(p.buyVal)}</div>}
-                  {p.sellQty>0&&<div style={{fontSize:12,color:"#5bc4f5"}}>${fmt(p.sellVal)}</div>}
+                  {p.buyQty>0&&<div style={{fontSize:12,color:"#f5c05b"}}>₹{fmt(p.buyVal)}</div>}
+                  {p.sellQty>0&&<div style={{fontSize:12,color:"#5bc4f5"}}>₹{fmt(p.sellVal)}</div>}
                 </div>
               </div>
             ))}
@@ -513,58 +642,19 @@ function Card({ children, style }) {
           <Label>Transactions in Range</Label>
           {reportData.filtered.length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:13}}>No transactions in selected range</div>}
           {[...reportData.filtered].reverse().map(tx=>(
-            <div key={tx.id} style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${tx.type==="buy"?"#1a4030":"#401a28"}`}}>
-              <div style={{display:"flex",justifyContent:"space-between"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:9,fontWeight:700,color:tx.type==="buy"?"#2aad72":"#e05070",background:tx.type==="buy"?"#0d3d2a":"#3d0d1a",padding:"3px 7px",borderRadius:4}}>{tx.type.toUpperCase()}</span>
-                  <span style={{fontSize:12,color:"#5bc4f5"}}>{tx.party}</span>
-                </div>
-                <span style={{fontSize:10,color:"#3a7a9c"}}>{fmtDate(tx.date)}</span>
-              </div>
-              <div style={{display:"flex",gap:16,marginTop:8}}>
-                <div><div style={{fontSize:9,color:"#3a7a9c"}}>QTY</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮</div></div>
-                <div><div style={{fontSize:9,color:"#3a7a9c"}}>PRICE</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>${tx.price}</div></div>
-                <div><div style={{fontSize:9,color:"#3a7a9c"}}>TOTAL</div><div style={{fontSize:14,fontWeight:700,color:tx.type==="buy"?"#e05070":"#2aad72"}}>{tx.type==="buy"?"-":"+"}${fmt(tx.price*tx.qty)}</div></div>
-              </div>
-            </div>
+            <TxCard key={tx.id} tx={tx} onEdit={openEdit} onDelete={(id)=>setDeleteConfirm(id)}/>
           ))}
         </div>
       )}
 
-      <Modal open={!!txModal} onClose={closeModal}>
-        <div style={{fontSize:9,color:"#3a7a9c",letterSpacing:3,marginBottom:4}}>NEW TRANSACTION</div>
-        <div style={{fontSize:20,fontWeight:700,marginBottom:20,color:isBuy?"#2aad72":"#e05070"}}>{isBuy?"▲ BUY USDT":"▼ SELL USDT"}</div>
-        {[{key:"price",label:"Price (per USDT)",placeholder:"e.g. 101.50",type:"number"},{key:"qty",label:"Quantity (USDT)",placeholder:"e.g. 500",type:"number"},{key:"party",label:isBuy?"Seller Name":"Buyer Name",placeholder:"e.g. Ahmed",type:"text"}].map(f=>(
-          <div key={f.key} style={{marginBottom:14}}>
-            <Label>{f.label}</Label>
-            <input type={f.type} inputMode={f.type==="number"?"decimal":"text"} placeholder={f.placeholder} value={form[f.key]} onChange={e=>{setForm(p=>({...p,[f.key]:e.target.value}));setError("");}} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"14px 16px",color:"#e0f0ff",fontSize:16,fontFamily:"inherit",outline:"none"}}/>
-          </div>
-        ))}
-        {previewAvg&&(
-          <div style={{background:"#0a2a1a",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1a5030"}}>
-            <div style={{fontSize:9,color:"#2aad72",letterSpacing:2,marginBottom:4}}>PREVIEW</div>
-            <div style={{fontSize:13,color:"#7de8c8"}}>New avg cost: <b>${fmt(previewAvg)}</b> <span style={{color:"#3a7a9c"}}>(was ${fmt(avgCost)})</span></div>
-            <div style={{fontSize:12,color:"#5bc4f5",marginTop:4}}>New USDT total: {fmt(portfolio.usdt+parseFloat(form.qty||0))} ₮</div>
-          </div>
-        )}
-        {form.price&&form.qty&&parseFloat(form.price)>0&&parseFloat(form.qty)>0&&(
-          <div style={{background:"#0a1820",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1a3040"}}>
-            <div style={{fontSize:12,color:"#7a9ab0"}}>Total: <b style={{color:"#e0f0ff"}}>${fmt(parseFloat(form.price)*parseFloat(form.qty))}</b></div>
-          </div>
-        )}
-        {error&&<div style={{color:"#e05070",fontSize:12,marginBottom:12,background:"#2a0a10",padding:"10px 14px",borderRadius:8}}>{error}</div>}
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={closeModal} style={{flex:1,padding:"14px",borderRadius:10,background:"#0a1820",border:"1px solid #1a3040",color:"#7a9ab0",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>CANCEL</button>
-          <button onClick={handleSubmit} style={{flex:2,padding:"14px",borderRadius:10,background:isBuy?"linear-gradient(135deg,#0d3d2a,#1a6b48)":"linear-gradient(135deg,#3d0d1a,#6b1a2a)",border:`1px solid ${isBuy?"#2aad72":"#ad2a4a"}`,color:isBuy?"#2aad72":"#e05070",fontSize:13,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer"}}>CONFIRM {txModal?.toUpperCase()}</button>
-        </div>
-      </Modal>
+      <TxFormModal open={txFormOpen} onClose={()=>{setTxFormOpen(false);setEditTx(null);}} mode={editTx?"edit":"new"} editTx={editTx} onSave={handleSave}/>
 
       <Modal open={!!deleteConfirm} onClose={()=>setDeleteConfirm(null)}>
         <div style={{fontSize:18,fontWeight:700,color:"#e05070",marginBottom:12}}>Delete Transaction?</div>
         <div style={{fontSize:13,color:"#7a9ab0",marginBottom:24}}>This will permanently delete from Firebase and recalculate all balances.</div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,padding:"14px",borderRadius:10,background:"#0a1820",border:"1px solid #1a3040",color:"#7a9ab0",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>CANCEL</button>
-          <button onClick={()=>handleDelete(deleteConfirm)} style={{flex:2,padding:"14px",borderRadius:10,background:"linear-gradient(135deg,#3d0d1a,#6b1a2a)",border:"1px solid #ad2a4a",color:"#e05070",fontSize:13,fontWeight:700,letterSpacing:1,fontFamily:"inherit",cursor:"pointer"}}>DELETE</button>
+          <button onClick={()=>handleDelete(deleteConfirm)} style={{flex:2,padding:"14px",borderRadius:10,background:"linear-gradient(135deg,#3d0d1a,#6b1a2a)",border:"1px solid #ad2a4a",color:"#e05070",fontSize:13,fontWeight:700,fontFamily:"inherit",cursor:"pointer"}}>DELETE</button>
         </div>
       </Modal>
 
