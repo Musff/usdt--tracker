@@ -17,9 +17,8 @@
     ::-webkit-scrollbar { width: 0; }
     .slide-up { animation: slideUp 0.25s ease; }
     @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    .fade-in { animation: fadeIn 0.3s ease; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
   </style>
 </head>
 <body>
@@ -27,46 +26,31 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-  const firebaseConfig = {
-    apiKey: "AIzaSyAOMPXSCdfTuyhqfP0OWXo_y0OCpOMLc-w",
-    authDomain: "tracker-bcacc.firebaseapp.com",
-    projectId: "tracker-bcacc",
-    storageBucket: "tracker-bcacc.firebasestorage.app",
-    messagingSenderId: "807298262681",
-    appId: "1:807298262681:web:3f627071a37a60ec287a08",
-    measurementId: "G-DC1G4MZ1WJ"
-  };
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  window.__db = db;
-  window.__fbReady = true;
-  window.__collection = collection;
-  window.__addDoc = addDoc;
-  window.__deleteDoc = deleteDoc;
-  window.__doc = doc;
-  window.__updateDoc = updateDoc;
-  window.__onSnapshot = onSnapshot;
-  window.__query = query;
-  window.__orderBy = orderBy;
-  window.dispatchEvent(new Event('firebase-ready'));
-</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script type="text/babel">
 const { useState, useMemo, useEffect } = React;
+
+const SUPABASE_URL = "https://cmqtohckfsenqirrafjn.supabase.co";
+const SUPABASE_KEY = "sb_publishable_7RKwl6PIZ6Tvu4u8m7wcsQ_jW-XrMku";
+const APP_PASSWORD = "Graff@2026#Tracker";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
 const TX_TYPES = {
   buy:        { label:"BUY",        color:"#2aad72", bg:"#0d3d2a", icon:"▲" },
   sell:       { label:"SELL",       color:"#e05070", bg:"#3d0d1a", icon:"▼" },
   capital:    { label:"CAPITAL",    color:"#f5c05b", bg:"#3d2a00", icon:"+" },
   loan_given: { label:"LOAN GIVEN", color:"#a78bfa", bg:"#2a1a4a", icon:"↑" },
   loan_back:  { label:"LOAN BACK",  color:"#34d399", bg:"#0a3a2a", icon:"↓" },
+  adjust:     { label:"ADJUST",     color:"#5bc4f5", bg:"#0a1a3a", icon:"⚖" },
 };
+
 const TABS = ["Transactions","Avg Cost","Stocks","Profit","Reports"];
 const fmt = (n) => Number(n||0).toFixed(2);
+const fmt2 = (n) => Number(n||0).toFixed(2);
 const fmtDate = (d) => new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
-const fmtTime = (d) => new Date(d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-  function Modal({ open, onClose, children }) {
+const todayDate = () => new Date().toISOString().split("T")[0];
+const todayTime = () => new Date().toTimeString().slice(0,5);
+function Modal({ open, onClose, children }) {
   if (!open) return null;
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:50,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
@@ -82,12 +66,12 @@ function Label({ children }) {
 function Card({ children, style }) {
   return <div style={{background:"#0a1820",borderRadius:12,padding:"14px 16px",border:"1px solid #1a3040",...style}}>{children}</div>;
 }
-function Input({ label, value, onChange, type="text", placeholder="" }) {
+function Input({ label, value, onChange, type="text", placeholder="", readOnly=false }) {
   return (
     <div style={{marginBottom:14}}>
       <Label>{label}</Label>
-      <input type={type} inputMode={type==="number"?"decimal":"text"} placeholder={placeholder} value={value} onChange={e=>onChange(e.target.value)}
-        style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"13px 16px",color:"#e0f0ff",fontSize:15,fontFamily:"inherit",outline:"none"}}/>
+      <input type={type} inputMode={type==="number"?"decimal":"text"} placeholder={placeholder} value={value} onChange={e=>onChange(e.target.value)} readOnly={readOnly}
+        style={{width:"100%",background:readOnly?"#070e14":"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"13px 16px",color:readOnly?"#5bc4f5":"#e0f0ff",fontSize:15,fontFamily:"inherit",outline:"none"}}/>
     </div>
   );
 }
@@ -143,50 +127,97 @@ function LineChart({ data, color="#7de8c8", height=120 }) {
     </svg>
   );
 }
+function LoginScreen({ onLogin }) {
+  const [pass, setPass] = useState("");
+  const [error, setError] = useState("");
+  const handle = () => {
+    if(pass===APP_PASSWORD){ onLogin(); }
+    else{ setError("Wrong password!"); setPass(""); }
+  };
+  return (
+    <div style={{minHeight:"100vh",background:"#070e14",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",padding:24}}>
+      <div style={{fontSize:48,marginBottom:16}}>₮</div>
+      <div style={{fontSize:24,fontWeight:700,color:"#7de8c8",marginBottom:4}}>USDT Tracker</div>
+      <div style={{fontSize:11,color:"#3a7a9c",letterSpacing:3,marginBottom:40}}>PORTFOLIO TRACKER</div>
+      <div style={{width:"100%",maxWidth:320}}>
+        <Label>Password</Label>
+        <input type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Enter password"
+          style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"14px 16px",color:"#e0f0ff",fontSize:16,fontFamily:"inherit",outline:"none",marginBottom:12}}/>
+        {error&&<div style={{color:"#e05070",fontSize:12,marginBottom:12,textAlign:"center"}}>{error}</div>}
+        <button onClick={handle} style={{width:"100%",padding:"14px",borderRadius:10,background:"linear-gradient(135deg,#0a1e14,#0d3d2a)",border:"1px solid #2aad72",color:"#2aad72",fontSize:14,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer"}}>
+          🔐 LOGIN
+        </button>
+      </div>
+    </div>
+  );
+}
   function TxFormModal({ open, onClose, mode, editTx, onSave }) {
   const isEdit = mode === "edit";
-  const [txType, setTxType] = useState(editTx?.type || "buy");
-  const [price, setPrice] = useState(editTx?.price?.toString() || "");
-  const [qty, setQty] = useState(editTx?.qty?.toString() || "");
-  const [amount, setAmount] = useState(editTx?.amount?.toString() || "");
-  const [party, setParty] = useState(editTx?.party || "");
-  const [note, setNote] = useState(editTx?.note || "");
-  const [assetType, setAssetType] = useState(editTx?.assetType || "cash");
-  const [date, setDate] = useState(editTx ? new Date(editTx.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]);
+  const [txType, setTxType] = useState("buy");
+  const [cash, setCash] = useState("");
+  const [usdt, setUsdt] = useState("");
+  const [amount, setAmount] = useState("");
+  const [party, setParty] = useState("");
+  const [note, setNote] = useState("");
+  const [assetType, setAssetType] = useState("cash");
+  const [adjustType, setAdjustType] = useState("add");
+  const [date, setDate] = useState(todayDate());
+  const [time, setTime] = useState(todayTime());
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
       setTxType(editTx?.type || "buy");
-      setPrice(editTx?.price?.toString() || "");
-      setQty(editTx?.qty?.toString() || "");
+      setCash(editTx?.cash?.toString() || "");
+      setUsdt(editTx?.qty?.toString() || editTx?.usdt?.toString() || "");
       setAmount(editTx?.amount?.toString() || "");
       setParty(editTx?.party || "");
       setNote(editTx?.note || "");
-      setAssetType(editTx?.assetType || "cash");
-      setDate(editTx ? new Date(editTx.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]);
+      setAssetType(editTx?.asset_type || "cash");
+      setAdjustType(editTx?.adjust_type || "add");
+      setDate(editTx?.date || todayDate());
+      setTime(editTx?.time || todayTime());
       setError("");
     }
   }, [open, editTx]);
+
+  const autoPrice = useMemo(() => {
+    const c = parseFloat(cash), u = parseFloat(usdt);
+    if(c > 0 && u > 0) return (c / u).toFixed(2);
+    return null;
+  }, [cash, usdt]);
 
   const cfg = TX_TYPES[txType] || TX_TYPES.buy;
 
   const handleSave = () => {
     setError("");
-    const txDate = new Date(date).toISOString();
-    if (txType==="buy"||txType==="sell") {
-      const p=parseFloat(price),q=parseFloat(qty);
-      if(!p||!q||!party.trim()){setError("Fill all fields");return;}
-      onSave({type:txType,price:p,qty:q,party:party.trim(),note,date:txDate});
-    } else if (txType==="capital") {
+    const data = { type:txType, date, time, note, party:party.trim() };
+    if(txType==="buy"||txType==="sell") {
+      const c=parseFloat(cash), u=parseFloat(usdt);
+      if(!c||!u||!party.trim()){setError("Fill all fields");return;}
+      data.cash = c;
+      data.qty = u;
+      data.price = parseFloat((c/u).toFixed(2));
+      data.amount = c;
+    } else if(txType==="capital") {
       const a=parseFloat(amount);
       if(!a){setError("Enter amount");return;}
-      onSave({type:"capital",amount:a,assetType,note,date:txDate,party:""});
-    } else if (txType==="loan_given"||txType==="loan_back") {
+      data.amount = a;
+      data.asset_type = assetType;
+      data.party = note;
+    } else if(txType==="loan_given"||txType==="loan_back") {
       const a=parseFloat(amount);
       if(!a||!party.trim()){setError("Fill amount and name");return;}
-      onSave({type:txType,amount:a,assetType,party:party.trim(),note,date:txDate});
+      data.amount = a;
+      data.asset_type = assetType;
+    } else if(txType==="adjust") {
+      const a=parseFloat(amount);
+      if(!a){setError("Enter adjustment amount");return;}
+      data.amount = adjustType==="add" ? Math.abs(a) : -Math.abs(a);
+      data.asset_type = assetType;
+      data.adjust_type = adjustType;
     }
+    onSave(data);
   };
 
   if (!open) return null;
@@ -196,18 +227,26 @@ function LineChart({ data, color="#7de8c8", height=120 }) {
       {!isEdit && (
         <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:20}}>
           {Object.entries(TX_TYPES).map(([key,c])=>(
-            <button key={key} onClick={()=>{setTxType(key);setError("");}} style={{padding:"8px 12px",borderRadius:8,fontFamily:"inherit",fontSize:10,fontWeight:700,letterSpacing:1,cursor:"pointer",background:txType===key?c.bg:"#0a1820",border:`1px solid ${txType===key?c.color:"#1a3040"}`,color:txType===key?c.color:"#3a7a9c"}}>{c.icon} {c.label}</button>
+            <button key={key} onClick={()=>{setTxType(key);setError("");}} style={{padding:"8px 10px",borderRadius:8,fontFamily:"inherit",fontSize:9,fontWeight:700,letterSpacing:1,cursor:"pointer",background:txType===key?c.bg:"#0a1820",border:`1px solid ${txType===key?c.color:"#1a3040"}`,color:txType===key?c.color:"#3a7a9c"}}>{c.icon} {c.label}</button>
           ))}
         </div>
       )}
-      <div style={{fontSize:18,fontWeight:700,marginBottom:20,color:cfg.color}}>{cfg.icon} {cfg.label}</div>
+      <div style={{fontSize:16,fontWeight:700,marginBottom:16,color:cfg.color}}>{cfg.icon} {cfg.label}</div>
+
       {(txType==="buy"||txType==="sell") && (
         <>
-          <Input label="Price (per USDT)" value={price} onChange={setPrice} type="number" placeholder="e.g. 89.50"/>
-          <Input label="Quantity (USDT)" value={qty} onChange={setQty} type="number" placeholder="e.g. 500"/>
+          <Input label={txType==="buy"?"Cash Paid (₹)":"Cash Received (₹)"} value={cash} onChange={setCash} type="number" placeholder="e.g. 40000"/>
+          <Input label={txType==="buy"?"USDT Received":"USDT Sold"} value={usdt} onChange={setUsdt} type="number" placeholder="e.g. 396.03"/>
+          {autoPrice && (
+            <div style={{background:"#0a2a1a",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1a5030"}}>
+              <div style={{fontSize:9,color:"#2aad72",letterSpacing:2,marginBottom:2}}>AUTO CALCULATED PRICE</div>
+              <div style={{fontSize:20,fontWeight:700,color:"#7de8c8"}}>₹{autoPrice} <span style={{fontSize:11,color:"#3a7a9c"}}>per USDT</span></div>
+            </div>
+          )}
           <Input label={txType==="buy"?"Seller Name":"Buyer Name"} value={party} onChange={setParty} placeholder="e.g. Ahmed"/>
         </>
       )}
+
       {txType==="capital" && (
         <>
           <div style={{marginBottom:14}}>
@@ -218,10 +257,11 @@ function LineChart({ data, color="#7de8c8", height=120 }) {
               ))}
             </div>
           </div>
-          <Input label={assetType==="cash"?"Cash Amount (₹)":"USDT Amount"} value={amount} onChange={setAmount} type="number" placeholder="e.g. 50000"/>
+          <Input label={assetType==="cash"?"Amount (₹)":"Amount (USDT)"} value={amount} onChange={setAmount} type="number" placeholder="e.g. 50000"/>
           <Input label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. Initial capital"/>
         </>
       )}
+
       {(txType==="loan_given"||txType==="loan_back") && (
         <>
           <div style={{marginBottom:14}}>
@@ -234,13 +274,44 @@ function LineChart({ data, color="#7de8c8", height=120 }) {
           </div>
           <Input label="Amount" value={amount} onChange={setAmount} type="number" placeholder="e.g. 10000"/>
           <Input label="Person Name" value={party} onChange={setParty} placeholder="e.g. Ravi"/>
-          <Input label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. personal loan"/>
         </>
       )}
-      <div style={{marginBottom:14}}>
-        <Label>Date</Label>
-        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"13px 16px",color:"#e0f0ff",fontSize:15,fontFamily:"inherit",outline:"none"}}/>
+
+      {txType==="adjust" && (
+        <>
+          <div style={{marginBottom:14}}>
+            <Label>Asset Type</Label>
+            <div style={{display:"flex",gap:10}}>
+              {[["cash","₹ Cash"],["usdt","USDT ₮"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setAssetType(v)} style={{flex:1,padding:"10px",borderRadius:8,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer",background:assetType===v?"#0a1a3a":"#0a1820",border:`1px solid ${assetType===v?"#5bc4f5":"#1a3040"}`,color:assetType===v?"#5bc4f5":"#3a7a9c"}}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{marginBottom:14}}>
+            <Label>Adjust Direction</Label>
+            <div style={{display:"flex",gap:10}}>
+              {[["add","+ Add"],["sub","− Subtract"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setAdjustType(v)} style={{flex:1,padding:"10px",borderRadius:8,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer",background:adjustType===v?"#0a1a3a":"#0a1820",border:`1px solid ${adjustType===v?"#5bc4f5":"#1a3040"}`,color:adjustType===v?"#5bc4f5":"#3a7a9c"}}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <Input label="Amount" value={amount} onChange={setAmount} type="number" placeholder="e.g. 0.01"/>
+        </>
+      )}
+
+      <Input label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. extra note"/>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+        <div>
+          <Label>Date</Label>
+          <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"12px",color:"#e0f0ff",fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+        </div>
+        <div>
+          <Label>Time</Label>
+          <input type="time" value={time} onChange={e=>setTime(e.target.value)} style={{width:"100%",background:"#07121a",border:"1px solid #1a3040",borderRadius:10,padding:"12px",color:"#e0f0ff",fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+        </div>
       </div>
+
       {error&&<div style={{color:"#e05070",fontSize:12,marginBottom:12,background:"#2a0a10",padding:"10px 14px",borderRadius:8}}>{error}</div>}
       <div style={{display:"flex",gap:10}}>
         <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:10,background:"#0a1820",border:"1px solid #1a3040",color:"#7a9ab0",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>CANCEL</button>
@@ -249,12 +320,12 @@ function LineChart({ data, color="#7de8c8", height=120 }) {
     </Modal>
   );
 }
-function TxCard({ tx, onEdit, onDelete }) {
+  function TxCard({ tx, onEdit, onDelete }) {
   const cfg=TX_TYPES[tx.type]||TX_TYPES.buy;
   const isBuySell=tx.type==="buy"||tx.type==="sell";
-  const total=isBuySell?tx.price*tx.qty:tx.amount;
-  const cashEffect=tx.type==="buy"?-total:tx.type==="sell"?total:tx.type==="capital"&&tx.assetType==="cash"?total:tx.type==="loan_back"&&tx.assetType==="cash"?total:tx.type==="loan_given"&&tx.assetType==="cash"?-total:0;
-  const usdtEffect=tx.type==="buy"?tx.qty:tx.type==="sell"?-tx.qty:tx.type==="capital"&&tx.assetType==="usdt"?tx.amount:tx.type==="loan_back"&&tx.assetType==="usdt"?tx.amount:tx.type==="loan_given"&&tx.assetType==="usdt"?-tx.amount:0;
+  const isAdjust=tx.type==="adjust";
+  const cashEffect=tx.type==="buy"?-tx.cash:tx.type==="sell"?tx.cash:tx.type==="capital"&&tx.asset_type==="cash"?tx.amount:tx.type==="loan_back"&&tx.asset_type==="cash"?tx.amount:tx.type==="loan_given"&&tx.asset_type==="cash"?-tx.amount:tx.type==="adjust"&&tx.asset_type==="cash"?tx.amount:0;
+  const usdtEffect=tx.type==="buy"?tx.qty:tx.type==="sell"?-tx.qty:tx.type==="capital"&&tx.asset_type==="usdt"?tx.amount:tx.type==="loan_back"&&tx.asset_type==="usdt"?tx.amount:tx.type==="loan_given"&&tx.asset_type==="usdt"?-tx.amount:tx.type==="adjust"&&tx.asset_type==="usdt"?tx.amount:0;
   return (
     <div style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${cfg.bg}`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
@@ -267,19 +338,25 @@ function TxCard({ tx, onEdit, onDelete }) {
           <button onClick={()=>onDelete(tx.id)} style={{background:"none",border:"1px solid #401a28",borderRadius:6,color:"#e05070",cursor:"pointer",fontSize:10,padding:"3px 8px",fontFamily:"inherit"}}>✕</button>
         </div>
       </div>
-      <div style={{fontSize:10,color:"#3a7a9c",marginBottom:8}}>📅 {fmtDate(tx.date)} · {fmtTime(tx.date)}</div>
+      <div style={{fontSize:10,color:"#3a7a9c",marginBottom:8}}>📅 {tx.date} · {tx.time}</div>
       <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
         {isBuySell&&(
           <>
-            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>QTY</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮</div></div>
-            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>PRICE</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>₹{tx.price}</div></div>
-            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>TOTAL</div><div style={{fontSize:14,fontWeight:700,color:tx.type==="buy"?"#e05070":"#2aad72"}}>₹{fmt(total)}</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>CASH</div><div style={{fontSize:14,fontWeight:700,color:tx.type==="buy"?"#e05070":"#2aad72"}}>₹{fmt(tx.cash)}</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>USDT</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{fmt(tx.qty)} ₮</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>PRICE</div><div style={{fontSize:14,fontWeight:700,color:"#7de8c8"}}>₹{fmt(tx.price)}</div></div>
           </>
         )}
-        {!isBuySell&&(
+        {!isBuySell&&!isAdjust&&(
           <>
-            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>AMOUNT</div><div style={{fontSize:14,fontWeight:700,color:cfg.color}}>{tx.assetType==="usdt"?"":"₹"}{fmt(tx.amount)}{tx.assetType==="usdt"?" ₮":""}</div></div>
-            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>TYPE</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{tx.assetType==="usdt"?"USDT":"Cash"}</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>AMOUNT</div><div style={{fontSize:14,fontWeight:700,color:cfg.color}}>{tx.asset_type==="usdt"?"":"₹"}{fmt(Math.abs(tx.amount||0))}{tx.asset_type==="usdt"?" ₮":""}</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>TYPE</div><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{tx.asset_type==="usdt"?"USDT":"Cash"}</div></div>
+          </>
+        )}
+        {isAdjust&&(
+          <>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>ADJUST</div><div style={{fontSize:14,fontWeight:700,color:tx.amount>=0?"#2aad72":"#e05070"}}>{tx.amount>=0?"+":""}{fmt(tx.amount)} {tx.asset_type==="usdt"?"₮":"₹"}</div></div>
+            <div><div style={{fontSize:9,color:"#3a7a9c",letterSpacing:1}}>TYPE</div><div style={{fontSize:14,fontWeight:700,color:"#5bc4f5"}}>{tx.asset_type==="usdt"?"USDT":"Cash"}</div></div>
           </>
         )}
       </div>
@@ -292,160 +369,186 @@ function TxCard({ tx, onEdit, onDelete }) {
   );
 }
   function App() {
+  const [loggedIn, setLoggedIn] = useState(()=>sessionStorage.getItem("auth")==="1");
   const [tab, setTab] = useState("Transactions");
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [fbReady, setFbReady] = useState(!!window.__fbReady);
   const [txFormOpen, setTxFormOpen] = useState(false);
   const [editTx, setEditTx] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
 
-  useEffect(()=>{
-    if(window.__fbReady){setFbReady(true);return;}
-    const h=()=>setFbReady(true);
-    window.addEventListener('firebase-ready',h);
-    return()=>window.removeEventListener('firebase-ready',h);
-  },[]);
+  const handleLogin = () => { sessionStorage.setItem("auth","1"); setLoggedIn(true); };
+  const handleLogout = () => { sessionStorage.removeItem("auth"); setLoggedIn(false); };
 
   useEffect(()=>{
-    if(!fbReady||!window.__db) return;
-    const q=window.__query(window.__collection(window.__db,"transactions"),window.__orderBy("date","asc"));
-    const unsub=window.__onSnapshot(q,snap=>{
-      setTransactions(snap.docs.map(d=>({id:d.id,...d.data(),date:new Date(d.data().date)})));
+    if(!loggedIn) return;
+    const fetch = async () => {
+      const { data, error } = await sb.from("transactions").select("*").order("date",{ascending:true}).order("time",{ascending:true});
+      if(error) console.error(error);
+      else setTransactions(data||[]);
       setLoading(false);
-    },err=>{console.error(err);setLoading(false);});
-    return unsub;
-  },[fbReady]);
+    };
+    fetch();
+    const sub = sb.channel("transactions").on("postgres_changes",{event:"*",schema:"public",table:"transactions"},fetch).subscribe();
+    return () => sb.removeChannel(sub);
+  },[loggedIn]);
+
+  // Sort by date+time then by type order (capital→buy→sell)
+  const typeOrder = { capital:0, loan_back:1, buy:2, adjust:3, sell:4, loan_given:5 };
+  const sorted = [...transactions].sort((a,b)=>{
+    const da=`${a.date} ${a.time}`, db=`${b.date} ${b.time}`;
+    if(da!==db) return da.localeCompare(db);
+    return (typeOrder[a.type]||0)-(typeOrder[b.type]||0);
+  });
 
   const portfolio = useMemo(()=>{
     let cash=0,usdt=0;
-    transactions.forEach(tx=>{
-      if(tx.type==="buy"){cash-=tx.price*tx.qty;usdt+=tx.qty;}
-      else if(tx.type==="sell"){cash+=tx.price*tx.qty;usdt-=tx.qty;}
-      else if(tx.type==="capital"){if(tx.assetType==="cash")cash+=tx.amount;else usdt+=tx.amount;}
-      else if(tx.type==="loan_given"){if(tx.assetType==="cash")cash-=tx.amount;else usdt-=tx.amount;}
-      else if(tx.type==="loan_back"){if(tx.assetType==="cash")cash+=tx.amount;else usdt+=tx.amount;}
+    sorted.forEach(tx=>{
+      if(tx.type==="buy"){cash-=tx.cash||0;usdt+=tx.qty||0;}
+      else if(tx.type==="sell"){cash+=tx.cash||0;usdt-=tx.qty||0;}
+      else if(tx.type==="capital"){if(tx.asset_type==="cash")cash+=tx.amount||0;else usdt+=tx.amount||0;}
+      else if(tx.type==="loan_given"){if(tx.asset_type==="cash")cash-=tx.amount||0;else usdt-=tx.amount||0;}
+      else if(tx.type==="loan_back"){if(tx.asset_type==="cash")cash+=tx.amount||0;else usdt+=tx.amount||0;}
+      else if(tx.type==="adjust"){if(tx.asset_type==="cash")cash+=tx.amount||0;else usdt+=tx.amount||0;}
     });
     return{cash,usdt};
-  },[transactions]);
+  },[sorted]);
 
   const avgCost = useMemo(()=>{
-    let cost=0,qty=0;
-    transactions.forEach(tx=>{
-      if(tx.type==="buy"){cost+=tx.price*tx.qty;qty+=tx.qty;}
-      else if(tx.type==="sell"){const avg=qty>0?cost/qty:0;cost-=avg*tx.qty;qty-=tx.qty;}
+    let totalCash=0,totalUsdt=0;
+    sorted.forEach(tx=>{
+      if(tx.type==="buy"){totalCash+=tx.cash||0;totalUsdt+=tx.qty||0;}
+      else if(tx.type==="sell"){
+        const avg=totalUsdt>0?totalCash/totalUsdt:0;
+        totalCash-=avg*(tx.qty||0);
+        totalUsdt-=tx.qty||0;
+      }
     });
-    return qty>0?cost/qty:0;
-  },[transactions]);
+    return totalUsdt>0?totalCash/totalUsdt:0;
+  },[sorted]);
 
   const profits = useMemo(()=>{
     const now=Date.now(),DAY=86400000;
-    let today=0,weekly=0,monthly=0,allTime=0,rc=0,ru=0;
-    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
-      if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
+    let today=0,weekly=0,monthly=0,allTime=0;
+    let totalCash=0,totalUsdt=0;
+    sorted.forEach(tx=>{
+      if(tx.type==="buy"){totalCash+=tx.cash||0;totalUsdt+=tx.qty||0;}
       else if(tx.type==="sell"){
-        const avg=ru>0?rc/ru:0,p=(tx.price-avg)*tx.qty;
+        const avg=totalUsdt>0?totalCash/totalUsdt:0;
+        const p=(tx.price-avg)*(tx.qty||0);
         const age=now-new Date(tx.date).getTime();
         allTime+=p;
         if(age<=DAY)today+=p;
         if(age<=DAY*7)weekly+=p;
         if(age<=DAY*30)monthly+=p;
-        rc-=avg*tx.qty;ru-=tx.qty;
+        totalCash-=avg*(tx.qty||0);
+        totalUsdt-=tx.qty||0;
       }
     });
     return{today,weekly,monthly,allTime};
-  },[transactions]);
+  },[sorted]);
 
   const profitGraphData = useMemo(()=>{
-    let rc=0,ru=0;const byDay={};
-    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
-      if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
+    let totalCash=0,totalUsdt=0;const byDay={};
+    sorted.forEach(tx=>{
+      if(tx.type==="buy"){totalCash+=tx.cash||0;totalUsdt+=tx.qty||0;}
       else if(tx.type==="sell"){
-        const avg=ru>0?rc/ru:0,p=(tx.price-avg)*tx.qty;
-        const key=new Date(tx.date).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+        const avg=totalUsdt>0?totalCash/totalUsdt:0;
+        const p=(tx.price-avg)*(tx.qty||0);
+        const key=tx.date;
         byDay[key]=(byDay[key]||0)+p;
-        rc-=avg*tx.qty;ru-=tx.qty;
+        totalCash-=avg*(tx.qty||0);totalUsdt-=tx.qty||0;
       }
     });
     let cum=0;
-    return Object.entries(byDay).map(([label,val])=>{cum+=val;return{label,value:cum};});
-  },[transactions]);
+    return Object.entries(byDay).sort().map(([label,val])=>{cum+=val;return{label,value:cum};});
+  },[sorted]);
 
   const partyData = useMemo(()=>{
     const buyers={},sellers={};
-    transactions.forEach(tx=>{
-      if(tx.type==="sell")buyers[tx.party]=(buyers[tx.party]||0)+tx.qty;
-      else if(tx.type==="buy")sellers[tx.party]=(sellers[tx.party]||0)+tx.qty;
+    sorted.forEach(tx=>{
+      if(tx.type==="sell"&&tx.party)buyers[tx.party]=(buyers[tx.party]||0)+(tx.qty||0);
+      else if(tx.type==="buy"&&tx.party)sellers[tx.party]=(sellers[tx.party]||0)+(tx.qty||0);
     });
     const C=["#7de8c8","#5bc4f5","#f5c05b","#e05070","#a78bfa","#34d399","#f97316","#60a5fa"];
     return{
       buyerList:Object.entries(buyers).map(([label,value],i)=>({label,value,color:C[i%C.length]})),
       sellerList:Object.entries(sellers).map(([label,value],i)=>({label,value,color:C[i%C.length]}))
     };
-  },[transactions]);
+  },[sorted]);
 
   const reportData = useMemo(()=>{
     const from=reportFrom?new Date(reportFrom):null;
     const to=reportTo?new Date(reportTo+"T23:59:59"):null;
-    const filtered=transactions.filter(tx=>{
+    const filtered=sorted.filter(tx=>{
       const d=new Date(tx.date);
       return(!from||d>=from)&&(!to||d<=to);
     });
-    let rc=0,ru=0,profit=0;
-    [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
-      if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
+    let totalCash=0,totalUsdt=0,profit=0;
+    sorted.forEach(tx=>{
+      if(tx.type==="buy"){totalCash+=tx.cash||0;totalUsdt+=tx.qty||0;}
       else if(tx.type==="sell"){
-        const avg=ru>0?rc/ru:0,p=(tx.price-avg)*tx.qty;
+        const avg=totalUsdt>0?totalCash/totalUsdt:0;
+        const p=(tx.price-avg)*(tx.qty||0);
         const d=new Date(tx.date);
         if((!from||d>=from)&&(!to||d<=to))profit+=p;
-        rc-=avg*tx.qty;ru-=tx.qty;
+        totalCash-=avg*(tx.qty||0);totalUsdt-=tx.qty||0;
       }
     });
     const byParty={};
     filtered.forEach(tx=>{
+      if(!tx.party)return;
       if(!byParty[tx.party])byParty[tx.party]={name:tx.party,buyQty:0,sellQty:0,buyVal:0,sellVal:0};
-      if(tx.type==="buy"){byParty[tx.party].buyQty+=tx.qty;byParty[tx.party].buyVal+=tx.price*tx.qty;}
-      else if(tx.type==="sell"){byParty[tx.party].sellQty+=tx.qty;byParty[tx.party].sellVal+=tx.price*tx.qty;}
+      if(tx.type==="buy"){byParty[tx.party].buyQty+=tx.qty||0;byParty[tx.party].buyVal+=tx.cash||0;}
+      else if(tx.type==="sell"){byParty[tx.party].sellQty+=tx.qty||0;byParty[tx.party].sellVal+=tx.cash||0;}
     });
     return{profit,filtered,partyList:Object.values(byParty).sort((a,b)=>(b.buyQty+b.sellQty)-(a.buyQty+a.sellQty))};
-  },[transactions,reportFrom,reportTo]);
+  },[sorted,reportFrom,reportTo]);
 
   const handleSave = async (data) => {
     try {
       if(editTx){
-        await window.__updateDoc(window.__doc(window.__db,"transactions",editTx.id),data);
+        await sb.from("transactions").update(data).eq("id",editTx.id);
       } else {
-        await window.__addDoc(window.__collection(window.__db,"transactions"),data);
+        await sb.from("transactions").insert(data);
       }
       setTxFormOpen(false);
       setEditTx(null);
+      // Refresh
+      const { data:d } = await sb.from("transactions").select("*").order("date",{ascending:true}).order("time",{ascending:true});
+      setTransactions(d||[]);
     } catch(e){alert("Save failed: "+e.message);}
   };
 
   const handleDelete = async (id) => {
-    try{await window.__deleteDoc(window.__doc(window.__db,"transactions",id));}
-    catch(e){alert("Delete failed: "+e.message);}
+    await sb.from("transactions").delete().eq("id",id);
+    setTransactions(prev=>prev.filter(t=>t.id!==id));
     setDeleteConfirm(null);
   };
 
   const openEdit=(tx)=>{setEditTx(tx);setTxFormOpen(true);};
   const openNew=()=>{setEditTx(null);setTxFormOpen(true);};
-  const sortedTx=[...transactions].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const sortedDesc=[...sorted].reverse();
 
+  if(!loggedIn) return <LoginScreen onLogin={handleLogin}/>;
   if(loading) return (
     <div style={{minHeight:"100vh",background:"#070e14",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
       <div style={{fontSize:32}}>₮</div>
-      <div style={{fontSize:13,color:"#3a7a9c",letterSpacing:3}}>CONNECTING...</div>
+      <div style={{fontSize:13,color:"#3a7a9c",letterSpacing:3}}>LOADING...</div>
     </div>
   );
     return (
     <div style={{minHeight:"100vh",background:"#070e14",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column"}}>
-      <div style={{padding:"max(env(safe-area-inset-top),20px) 20px 12px",background:"#070e14",borderBottom:"1px solid #1a3040"}}>
-        <div style={{fontSize:9,letterSpacing:4,color:"#3a7a9c",textTransform:"uppercase",marginBottom:2}}>Portfolio Tracker</div>
-        <div style={{fontSize:24,fontWeight:700,color:"#7de8c8",letterSpacing:-1}}>USDT Tracker</div>
+      <div style={{padding:"max(env(safe-area-inset-top),20px) 20px 12px",background:"#070e14",borderBottom:"1px solid #1a3040",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+        <div>
+          <div style={{fontSize:9,letterSpacing:4,color:"#3a7a9c",textTransform:"uppercase",marginBottom:2}}>Portfolio Tracker</div>
+          <div style={{fontSize:22,fontWeight:700,color:"#7de8c8",letterSpacing:-1}}>USDT Tracker</div>
+        </div>
+        <button onClick={handleLogout} style={{background:"none",border:"1px solid #1a3040",borderRadius:8,color:"#3a7a9c",fontSize:10,padding:"6px 12px",fontFamily:"inherit",cursor:"pointer"}}>🔒 Logout</button>
       </div>
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:1,background:"#1a3040"}}>
         {[{label:"Cash",value:`₹${fmt(portfolio.cash)}`,color:"#7de8c8"},{label:"USDT",value:`${fmt(portfolio.usdt)} ₮`,color:"#5bc4f5"}].map(s=>(
           <div key={s.label} style={{background:"#0a1820",padding:"10px 16px"}}>
@@ -454,6 +557,7 @@ function TxCard({ tx, onEdit, onDelete }) {
           </div>
         ))}
       </div>
+
       <div style={{display:"flex",background:"#0a1820",borderBottom:"2px solid #1a3040",overflowX:"auto"}}>
         {TABS.map(t=>(
           <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"11px 4px",background:"none",border:"none",cursor:"pointer",fontSize:9,letterSpacing:1,fontFamily:"inherit",fontWeight:600,color:tab===t?"#7de8c8":"#3a7a9c",borderBottom:tab===t?"2px solid #7de8c8":"2px solid transparent",marginBottom:-2,textTransform:"uppercase",whiteSpace:"nowrap",minWidth:60}}>{t}</button>
@@ -463,13 +567,12 @@ function TxCard({ tx, onEdit, onDelete }) {
       {tab==="Transactions" && (
         <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",height:"calc(100vh - 150px)"}}>
           <div style={{padding:"14px 20px",borderBottom:"1px solid #1a3040",flexShrink:0}}>
-            <Label>New Transaction</Label>
-            <button onClick={openNew} style={{width:"100%",padding:"14px",borderRadius:12,background:"linear-gradient(135deg,#0a1e14,#0d3d2a)",border:"1px solid #2aad72",color:"#2aad72",fontSize:13,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer",marginTop:8}}>+ ADD TRANSACTION</button>
+            <button onClick={openNew} style={{width:"100%",padding:"14px",borderRadius:12,background:"linear-gradient(135deg,#0a1e14,#0d3d2a)",border:"1px solid #2aad72",color:"#2aad72",fontSize:13,fontWeight:700,letterSpacing:2,fontFamily:"inherit",cursor:"pointer"}}>+ ADD TRANSACTION</button>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"14px 20px"}}>
-            <Label>History ({transactions.length})</Label>
-            {sortedTx.length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:"40px 0",fontSize:13}}>No transactions yet.</div>}
-            {sortedTx.map(tx=><TxCard key={tx.id} tx={tx} onEdit={openEdit} onDelete={(id)=>setDeleteConfirm(id)}/>)}
+            <Label>History ({transactions.length}) — sorted by date & time</Label>
+            {sortedDesc.length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:"40px 0",fontSize:13}}>No transactions yet.</div>}
+            {sortedDesc.map(tx=><TxCard key={tx.id} tx={tx} onEdit={openEdit} onDelete={(id)=>setDeleteConfirm(id)}/>)}
           </div>
         </div>
       )}
@@ -489,20 +592,21 @@ function TxCard({ tx, onEdit, onDelete }) {
           <Card style={{marginBottom:16}}>
             <div style={{fontSize:10,color:"#5bc4f5",letterSpacing:2,marginBottom:10}}>HOW IT WORKS</div>
             <div style={{fontSize:12,color:"#7a9ab0",lineHeight:1.8}}>
-              <b style={{color:"#e0f0ff"}}>Buy:</b> New avg = (Old avg × Old qty + New price × New qty) ÷ Total<br/>
+              <b style={{color:"#e0f0ff"}}>Buy:</b> Avg = Total Cash Spent ÷ Total USDT Bought<br/>
               <b style={{color:"#e0f0ff"}}>Sell:</b> Avg cost stays same, qty reduces<br/>
-              <b style={{color:"#e0f0ff"}}>Profit:</b> (Sell price − Avg cost) × qty
+              <b style={{color:"#e0f0ff"}}>Profit:</b> (Sell price − Avg cost) × qty<br/>
+              <b style={{color:"#e0f0ff"}}>Order:</b> Sorted by date & time ✅
             </div>
           </Card>
           <Label>Buy History</Label>
-          {transactions.filter(t=>t.type==="buy").length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:13}}>No buys yet</div>}
-          {[...transactions].filter(t=>t.type==="buy").reverse().map(tx=>(
+          {sorted.filter(t=>t.type==="buy").length===0&&<div style={{color:"#3a7a9c",textAlign:"center",padding:20,fontSize:13}}>No buys yet</div>}
+          {[...sorted].filter(t=>t.type==="buy").reverse().map(tx=>(
             <div key={tx.id} style={{display:"flex",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid #1a3040"}}>
               <div>
-                <div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{tx.qty} ₮ @ ₹{tx.price}</div>
-                <div style={{fontSize:11,color:"#3a7a9c"}}>{tx.party} · {fmtDate(tx.date)}</div>
+                <div style={{fontSize:13,color:"#e0f0ff",fontWeight:600}}>{fmt(tx.qty)} ₮ · ₹{fmt(tx.cash)}</div>
+                <div style={{fontSize:11,color:"#3a7a9c"}}>{tx.party} · {tx.date} {tx.time} · ₹{fmt(tx.price)}/₮</div>
               </div>
-              <div style={{fontSize:13,color:"#f5c05b",fontWeight:700}}>₹{fmt(tx.price*tx.qty)}</div>
+              <div style={{fontSize:13,color:"#f5c05b",fontWeight:700}}>₹{fmt(tx.cash)}</div>
             </div>
           ))}
         </div>
@@ -527,14 +631,14 @@ function TxCard({ tx, onEdit, onDelete }) {
             <Card>
               <Label>Summary</Label>
               {[
-                {l:"Total Bought",v:`${fmt(transactions.filter(t=>t.type==="buy").reduce((a,t)=>a+t.qty,0))} ₮`,c:"#2aad72"},
-                {l:"Total Sold",v:`${fmt(transactions.filter(t=>t.type==="sell").reduce((a,t)=>a+t.qty,0))} ₮`,c:"#e05070"},
-                {l:"Capital Added (Cash)",v:`₹${fmt(transactions.filter(t=>t.type==="capital"&&t.assetType==="cash").reduce((a,t)=>a+t.amount,0))}`,c:"#f5c05b"},
-                {l:"Capital Added (USDT)",v:`${fmt(transactions.filter(t=>t.type==="capital"&&t.assetType==="usdt").reduce((a,t)=>a+t.amount,0))} ₮`,c:"#f5c05b"},
-                {l:"Loans Given",v:`₹${fmt(transactions.filter(t=>t.type==="loan_given"&&t.assetType==="cash").reduce((a,t)=>a+t.amount,0))}`,c:"#a78bfa"},
-                {l:"Loans Returned",v:`₹${fmt(transactions.filter(t=>t.type==="loan_back"&&t.assetType==="cash").reduce((a,t)=>a+t.amount,0))}`,c:"#34d399"},
+                {l:"Total Bought",v:`${fmt(sorted.filter(t=>t.type==="buy").reduce((a,t)=>a+(t.qty||0),0))} ₮`,c:"#2aad72"},
+                {l:"Total Sold",v:`${fmt(sorted.filter(t=>t.type==="sell").reduce((a,t)=>a+(t.qty||0),0))} ₮`,c:"#e05070"},
+                {l:"Capital (Cash)",v:`₹${fmt(sorted.filter(t=>t.type==="capital"&&t.asset_type==="cash").reduce((a,t)=>a+(t.amount||0),0))}`,c:"#f5c05b"},
+                {l:"Capital (USDT)",v:`${fmt(sorted.filter(t=>t.type==="capital"&&t.asset_type==="usdt").reduce((a,t)=>a+(t.amount||0),0))} ₮`,c:"#f5c05b"},
+                {l:"Loans Given",v:`₹${fmt(sorted.filter(t=>t.type==="loan_given"&&t.asset_type==="cash").reduce((a,t)=>a+(t.amount||0),0))}`,c:"#a78bfa"},
+                {l:"Loans Returned",v:`₹${fmt(sorted.filter(t=>t.type==="loan_back"&&t.asset_type==="cash").reduce((a,t)=>a+(t.amount||0),0))}`,c:"#34d399"},
                 {l:"Avg Cost",v:`₹${fmt(avgCost)}`,c:"#f5c05b"},
-                {l:"Net Position",v:`${fmt(portfolio.usdt)} ₮`,c:"#7de8c8"},
+                {l:"Net USDT",v:`${fmt(portfolio.usdt)} ₮`,c:"#7de8c8"},
               ].map(r=>(
                 <div key={r.l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #1a3040"}}>
                   <span style={{fontSize:12,color:"#7a9ab0"}}>{r.l}</span>
@@ -576,19 +680,24 @@ function TxCard({ tx, onEdit, onDelete }) {
           </Card>
           <Label>Sell History (P&L per trade)</Label>
           {(()=>{
-            let rc=0,ru=0;const rows=[];
-            [...transactions].sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(tx=>{
-              if(tx.type==="buy"){rc+=tx.price*tx.qty;ru+=tx.qty;}
-              else if(tx.type==="sell"){const avg=ru>0?rc/ru:0;rows.push({tx,avg,profit:(tx.price-avg)*tx.qty});rc-=avg*tx.qty;ru-=tx.qty;}
+            let totalCash=0,totalUsdt=0;const rows=[];
+            sorted.forEach(tx=>{
+              if(tx.type==="buy"){totalCash+=tx.cash||0;totalUsdt+=tx.qty||0;}
+              else if(tx.type==="sell"){
+                const avg=totalUsdt>0?totalCash/totalUsdt:0;
+                const profit=(tx.price-avg)*(tx.qty||0);
+                rows.push({tx,avg,profit});
+                totalCash-=avg*(tx.qty||0);totalUsdt-=tx.qty||0;
+              }
             });
             if(rows.length===0)return<div style={{color:"#3a7a9c",textAlign:"center",padding:24,fontSize:13}}>No sells yet</div>;
             return rows.reverse().map(({tx,avg,profit})=>(
               <div key={tx.id} style={{background:"#0a1820",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`1px solid ${profit>=0?"#1a4030":"#401a28"}`}}>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
                   <div>
-                    <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>{tx.qty} ₮ @ ₹{tx.price}</div>
-                    <div style={{fontSize:11,color:"#3a7a9c"}}>Avg ₹{fmt(avg)} · {tx.party}</div>
-                    <div style={{fontSize:10,color:"#3a7a9c"}}>📅 {fmtDate(tx.date)}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>{fmt(tx.qty)} ₮ · ₹{fmt(tx.cash)}</div>
+                    <div style={{fontSize:11,color:"#3a7a9c"}}>Avg ₹{fmt(avg)} · Price ₹{fmt(tx.price)} · {tx.party}</div>
+                    <div style={{fontSize:10,color:"#3a7a9c"}}>📅 {tx.date} · {tx.time}</div>
                   </div>
                   <div style={{fontSize:15,fontWeight:700,color:profit>=0?"#2aad72":"#e05070"}}>{profit>=0?"+":"-"}₹{fmt(Math.abs(profit))}</div>
                 </div>
@@ -651,7 +760,7 @@ function TxCard({ tx, onEdit, onDelete }) {
 
       <Modal open={!!deleteConfirm} onClose={()=>setDeleteConfirm(null)}>
         <div style={{fontSize:18,fontWeight:700,color:"#e05070",marginBottom:12}}>Delete Transaction?</div>
-        <div style={{fontSize:13,color:"#7a9ab0",marginBottom:24}}>This will permanently delete from Firebase and recalculate all balances.</div>
+        <div style={{fontSize:13,color:"#7a9ab0",marginBottom:24}}>This will permanently delete from Supabase.</div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,padding:"14px",borderRadius:10,background:"#0a1820",border:"1px solid #1a3040",color:"#7a9ab0",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:600}}>CANCEL</button>
           <button onClick={()=>handleDelete(deleteConfirm)} style={{flex:2,padding:"14px",borderRadius:10,background:"linear-gradient(135deg,#3d0d1a,#6b1a2a)",border:"1px solid #ad2a4a",color:"#e05070",fontSize:13,fontWeight:700,fontFamily:"inherit",cursor:"pointer"}}>DELETE</button>
@@ -661,6 +770,7 @@ function TxCard({ tx, onEdit, onDelete }) {
     </div>
   );
 }
+
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 <script>
